@@ -1,0 +1,9 @@
+**/node_modules
+**/.DS_Store
+frontend/dist
+frontend/dist-test
+backend/data
+backend/test
+*.db
+*.db-*
+.env

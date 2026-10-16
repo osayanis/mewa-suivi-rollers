@@ -1,0 +1,21 @@
+{
+  "name": "mewa-roller-tracker-ui",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Interface web du suivi des rollers Mewa (servie par le backend)",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test:barcode": "esbuild test/code128.check.ts --bundle --platform=node --log-level=warning --outfile=dist-test/code128.check.cjs && node dist-test/code128.check.cjs"
+  },
+  "dependencies": {
+    "@zxing/browser": "0.1.5",
+    "@zxing/library": "0.21.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "typescript": "5.8.3"
+  }
+}
