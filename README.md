@@ -50,6 +50,23 @@ stateDiagram-v2
 
 Chaque scan est enregistré au nom du poste (**GS75 Toussieu**), avec sa date et son heure.
 
+## Lancement en un double-clic (Windows)
+
+1. Installez **Docker Desktop** (recommandé) ou **Node.js** (version LTS).
+2. Récupérez le projet (`gh repo clone osayanis/mewa-suivi-rollers`, ou bouton **Code → Download ZIP**).
+3. Double-cliquez sur **`demarrer.bat`**.
+
+Le script choisit le bon mode :
+- **Docker** s'il est installé : il démarre Docker Desktop si besoin, puis lance le conteneur ;
+- sinon **Node.js** : il installe ce qu'il faut, puis lance le serveur dans une fenêtre réduite.
+
+Il attend ensuite que l'application réponde et l'ouvre dans le navigateur. S'il est relancé alors que l'application tourne déjà, il ouvre seulement le navigateur.
+
+Pour arrêter l'application : **`arreter.bat`**. Les données sont conservées.
+
+> [!NOTE]
+> Si Windows affiche « Windows a protégé votre ordinateur », cliquez sur **Informations complémentaires → Exécuter quand même**. C'est normal pour un script téléchargé.
+
 ## Installation
 
 Pré-requis : un serveur avec **Docker** et **Docker Compose**.
@@ -136,6 +153,8 @@ cd backend && npm install && PUBLIC_DIR=../frontend/dist npm run dev
 
 ```
 .
+├── demarrer.bat             # lancement en un double-clic (Windows)
+├── arreter.bat              # arrêt de l'application
 ├── Dockerfile               # image unique : construit l'interface puis lance le serveur
 ├── docker-compose.yml
 ├── .env.example
