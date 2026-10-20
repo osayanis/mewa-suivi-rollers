@@ -146,6 +146,25 @@ if "%MODE%"=="node" (
 if "%MODE%"=="deja" (
   echo   L'application était déjà lancée.
 )
+
+rem --- Premier démarrage : identifiants du compte administrateur (mot de passe provisoire). ---
+set "CREDS=%TEMP%\mewa-rollers-admin.txt"
+if exist "%CREDS%" del "%CREDS%" >nul 2>&1
+if exist "%~dp0backend\data\identifiants-admin-initial.txt" copy /y "%~dp0backend\data\identifiants-admin-initial.txt" "%CREDS%" >nul
+where docker >nul 2>&1
+if not errorlevel 1 docker compose exec -T rollers cat /data/identifiants-admin-initial.txt > "%CREDS%" 2>nul
+for %%F in ("%CREDS%") do if %%~zF GTR 0 (
+  echo.
+  echo   ==============================================
+  type "%CREDS%"
+  echo   ==============================================
+  echo   Notez ces identifiants : ils servent à la première connexion.
+  del "%CREDS%" >nul 2>&1
+  echo.
+  pause
+  exit /b 0
+)
+if exist "%CREDS%" del "%CREDS%" >nul 2>&1
 echo.
 timeout /t 8 >nul
 exit /b 0

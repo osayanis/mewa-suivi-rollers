@@ -8,13 +8,14 @@ import { isCompleteCode } from '../codes';
 import { clear, h, icon } from '../dom';
 import { playFeedback } from '../feedback';
 import { formatDateTimeAt, formatTime } from '../format';
-import { fire, IAppContext, IView } from '../ui';
+import { endMaintenance, openMaintenanceDialog } from '../maintenance';
+import { fire, IAppContext, IView, reasonsText } from '../ui';
 
 interface IRecent {
   at: string;
   code: string;
   label: string;
-  kind: 'out' | 'in' | 'duplicate' | 'error';
+  kind: 'out' | 'in' | 'duplicate' | 'error' | 'maintenance';
   text: string;
   movement?: IMovement;
   cancelled?: boolean;
@@ -35,8 +36,7 @@ export function createScannerView(ctx: IAppContext): IView {
   const AUTO_COMPLETE_MS = 80;
   const AUTO_BURST_IDLE_MS = 300;
   const BURST_MAX_GAP_MS = 80;
-  let codePrefix = 'ROL';
-  let codeDigits = 6;
+  const { codePrefix, codeDigits } = ctx.info;
   let autoTimer: number | undefined;
   let lastInputAt = 0;
   let burstOnly = true;
@@ -127,6 +127,7 @@ export function createScannerView(ctx: IAppContext): IView {
           { className: 'mrt-steps' },
           h('li', null, h('strong', null, 'Au départ'), ' : scannez le roller, il passe « En transit ».'),
           h('li', null, h('strong', null, 'Au retour'), ' : rescannez-le, il repasse « Sur site ».'),
+          h('li', null, h('strong', null, 'Roller abîmé'), ' : après le scan de retour, touchez « Maintenance ».'),
         ),
       ),
     );
@@ -144,18 +145,27 @@ export function createScannerView(ctx: IAppContext): IView {
     );
   }
 
+  type CardKind = 'out' | 'in' | 'duplicate' | 'error' | 'cancelled' | 'maintenance';
+  const CARD_ICONS: Record<CardKind, string> = {
+    out: 'out',
+    in: 'in',
+    duplicate: 'info',
+    error: 'alert',
+    cancelled: 'undo',
+    maintenance: 'wrench',
+  };
+
   function resultCard(
-    kind: 'out' | 'in' | 'duplicate' | 'error' | 'cancelled',
+    kind: CardKind,
     kicker: string,
     code: string,
     meta: string | string[],
-    action?: HTMLElement,
+    actions: HTMLElement[] = [],
   ): HTMLElement {
-    const iconName = kind === 'out' ? 'out' : kind === 'in' ? 'in' : kind === 'error' ? 'alert' : kind === 'cancelled' ? 'undo' : 'info';
     return h(
       'div',
       { className: `mrt-result mrt-result-${kind} mrt-pop` },
-      h('div', { className: 'mrt-result-icon' }, icon(iconName)),
+      h('div', { className: 'mrt-result-icon' }, icon(CARD_ICONS[kind])),
       h(
         'div',
         { className: 'mrt-result-main' },
@@ -163,7 +173,7 @@ export function createScannerView(ctx: IAppContext): IView {
         code ? h('p', { className: 'mrt-result-code' }, code) : null,
         (Array.isArray(meta) ? meta : [meta]).filter(Boolean).map((line) => h('p', { className: 'mrt-result-meta' }, line)),
       ),
-      action ?? null,
+      actions.length ? h('div', { className: 'mrt-result-actions' }, actions) : null,
     );
   }
 
@@ -180,6 +190,71 @@ export function createScannerView(ctx: IAppContext): IView {
       },
       icon('undo'),
       'Annuler',
+    );
+    return btn;
+  }
+
+  // Au retour, l'agent peut signaler tout de suite un roller abîmé.
+  function maintenanceButton(roller: IRoller, entry: IRecent): HTMLElement {
+    return h(
+      'button',
+      {
+        type: 'button',
+        className: 'mrt-btn mrt-btn-ghost-light',
+        onClick: () =>
+          openMaintenanceDialog(ctx, roller, (r) => {
+            entry.text = 'Retour — mis en maintenance';
+            renderRecent();
+            showMaintenance(r, 'Mis en maintenance');
+            fire(refreshCounters());
+          }),
+      },
+      icon('wrench'),
+      'Maintenance',
+    );
+  }
+
+  function showMaintenance(r: IRoller, kicker: string): void {
+    clear(result);
+    result.appendChild(
+      resultCard(
+        'maintenance',
+        kicker,
+        r.code,
+        [describeRoller(r), `À réparer : ${reasonsText(r.maintenanceReasons, ctx.info)}`],
+        [repairedButton(r)],
+      ),
+    );
+  }
+
+  function repairedButton(r: IRoller): HTMLElement {
+    const btn = h(
+      'button',
+      {
+        type: 'button',
+        className: 'mrt-btn mrt-btn-ghost-light',
+        onClick: () => {
+          btn.disabled = true;
+          endMaintenance(ctx, r)
+            .then((done) => {
+              if (!done) {
+                btn.disabled = false;
+                return;
+              }
+              clear(result);
+              result.appendChild(
+                resultCard('in', 'Remis en service — sur site', done.code, [describeRoller(done), 'Il peut de nouveau partir.']),
+              );
+              playFeedback('in', ctx.prefs.sound);
+              recent.unshift({ at: new Date().toISOString(), code: done.code, label: done.label, kind: 'in', text: 'Remis en service' });
+              renderRecent();
+              fire(refreshCounters());
+            })
+            .finally(focusInput);
+        },
+      },
+      icon('check'),
+      'Remettre en service',
     );
     return btn;
   }
@@ -236,7 +311,7 @@ export function createScannerView(ctx: IAppContext): IView {
           'Départ enregistré — en transit',
           r.code,
           [describeRoller(r), `Départ : ${formatDateTimeAt(res.movement?.scannedAt)}`],
-          undoButton(entry),
+          [undoButton(entry)],
         ),
       );
       playFeedback('out', ctx.prefs.sound);
@@ -252,7 +327,7 @@ export function createScannerView(ctx: IAppContext): IView {
             `Départ : ${formatDateTimeAt(res.departedAt)}`,
             `Retour : ${formatDateTimeAt(res.movement?.scannedAt)}`,
           ],
-          undoButton(entry),
+          [maintenanceButton(r, entry), undoButton(entry)],
         ),
       );
       playFeedback('in', ctx.prefs.sound);
@@ -270,21 +345,31 @@ export function createScannerView(ctx: IAppContext): IView {
     const apiErr = err instanceof ApiError ? err : undefined;
     let kicker = 'Scan non enregistré';
     let meta = err instanceof Error ? err.message : 'Erreur inattendue.';
-    let action: HTMLElement | undefined;
+    let actions: HTMLElement[] = [];
+    if (apiErr?.code === 'in_maintenance' && apiErr.roller) {
+      // Pas une erreur de l'agent : le roller attend sa réparation.
+      showMaintenance(apiErr.roller, 'En maintenance — départ bloqué');
+      playFeedback('warning', ctx.prefs.sound);
+      recent.unshift({ at: new Date().toISOString(), code: apiErr.roller.code, label: apiErr.roller.label, kind: 'maintenance', text: 'En maintenance' });
+      renderRecent();
+      return;
+    }
     if (apiErr?.code === 'unknown_code') {
       kicker = 'Code inconnu';
       meta = "Ce code-barres n'est pas enregistré. Vérifiez l'étiquette ou créez le roller dans l'onglet Rollers.";
+    } else if (apiErr?.code === 'other_agency') {
+      kicker = 'Roller d’une autre agence';
     } else if (apiErr?.code === 'network') {
       kicker = 'Pas de connexion';
-      action = h(
+      actions = [h(
         'button',
         { type: 'button', className: 'mrt-btn mrt-btn-ghost-light', onClick: () => submit(code) },
         icon('refresh'),
         'Réessayer',
-      );
+      )];
     }
     clear(result);
-    result.appendChild(resultCard('error', kicker, code, meta, action));
+    result.appendChild(resultCard('error', kicker, code, meta, actions));
     playFeedback('error', ctx.prefs.sound);
     recent.unshift({ at: new Date().toISOString(), code, label: '', kind: 'error', text: kicker });
     renderRecent();
@@ -333,6 +418,12 @@ export function createScannerView(ctx: IAppContext): IView {
           h('strong', null, String(s.inTransit)),
           h('span', null, 'en transit actuellement'),
         ),
+        h(
+          'div',
+          { className: 'mrt-today-item mrt-today-maintenance' },
+          h('strong', null, String(s.maintenance)),
+          h('span', null, 'en maintenance'),
+        ),
       );
     } catch {
       /* les compteurs sont secondaires */
@@ -343,7 +434,7 @@ export function createScannerView(ctx: IAppContext): IView {
   const recentSection = h(
     'section',
     { className: 'mrt-recent-section' },
-    h('h3', { className: 'mrt-section-title' }, 'Derniers scans sur ce poste'),
+    h('h3', { className: 'mrt-section-title' }, 'Derniers scans'),
     recentList,
   );
 
@@ -403,16 +494,6 @@ export function createScannerView(ctx: IAppContext): IView {
   };
   document.addEventListener('keydown', onGlobalKey, true);
 
-  const loadCodeFormat = async (): Promise<void> => {
-    try {
-      const info = await ctx.api.info();
-      codePrefix = info.codePrefix;
-      codeDigits = info.codeDigits;
-    } catch {
-      /* format par défaut : ROL + 6 chiffres */
-    }
-  };
-
   showIdle();
   renderRecent();
 
@@ -421,7 +502,6 @@ export function createScannerView(ctx: IAppContext): IView {
     activate() {
       active = true;
       fire(refreshCounters());
-      fire(loadCodeFormat());
       window.setTimeout(focusInput, 50);
     },
     deactivate() {

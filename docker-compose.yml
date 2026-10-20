@@ -1,7 +1,7 @@
 services:
   rollers:
     build: .
-    image: mewa/suivi-rollers:2.0.0
+    image: mewa/suivi-rollers:3.0.0
     container_name: mewa-rollers
     restart: unless-stopped
     env_file:

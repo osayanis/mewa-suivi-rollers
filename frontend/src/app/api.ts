@@ -1,13 +1,42 @@
 // Client de l'API (même serveur que l'interface : les chemins /api/... sont relatifs).
+// La session est portée par un cookie HttpOnly posé par le serveur à la connexion.
 
-export type RollerStatus = 'on_site' | 'in_transit';
+export type RollerStatus = 'on_site' | 'in_transit' | 'maintenance';
+export type MovementKind = 'out' | 'in' | 'maintenance_start' | 'maintenance_end';
+export type Role = 'admin' | 'agent';
+
+export interface IAgency {
+  id: number;
+  code: string;
+  city: string;
+  /** « GS75 Toussieu », ou le code seul si la ville n'est pas renseignée. */
+  name: string;
+}
+
+export interface IAgencyAdmin extends IAgency {
+  rollers: number;
+  users: number;
+}
+
+export interface IUser {
+  id: number;
+  username: string;
+  role: Role;
+  agency: IAgency | null;
+  mustChangePassword: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
 
 export interface IRoller {
   id: number;
   code: string;
+  agency: IAgency;
   label: string;
   notes: string;
   status: RollerStatus;
+  maintenanceReasons: string[];
+  maintenanceSince: string | null;
   lastMovementAt: string | null;
   lastAgent: string | null;
   sinceSeconds: number | null;
@@ -21,7 +50,9 @@ export interface IMovement {
   id: number;
   code: string;
   label: string;
-  direction: 'out' | 'in';
+  agency: IAgency;
+  kind: MovementKind;
+  reasons: string[];
   agent: string | null;
   scannedAt: string;
   cancelled: boolean;
@@ -37,16 +68,32 @@ export interface IStats {
   total: number;
   onSite: number;
   inTransit: number;
+  maintenance: number;
   overdue: number;
   outToday: number;
   inToday: number;
   overdueDays: number;
 }
 
+export interface IAgencyStats extends Omit<IStats, 'overdueDays'> {
+  agency: IAgency;
+}
+
+export interface IOverview {
+  totals: IStats;
+  agencies: IAgencyStats[];
+}
+
+export interface IMaintenanceReason {
+  id: string;
+  label: string;
+}
+
 export interface IServerInfo {
-  station: string;
   codePrefix: string;
   codeDigits: number;
+  overdueDays: number;
+  maintenanceReasons: IMaintenanceReason[];
 }
 
 export interface IScanResult {
@@ -55,6 +102,11 @@ export interface IScanResult {
   /** Date et heure du départ (pour un retour : celle du départ précédent). */
   departedAt?: string | null;
   movement?: IMovement;
+  roller: IRoller;
+}
+
+export interface IMovementResult {
+  movement: IMovement;
   roller: IRoller;
 }
 
@@ -73,115 +125,174 @@ export class ApiError extends Error {
 }
 
 export interface IApiClientOptions {
-  /** Code d'accès mémorisé sur l'appareil (si le serveur en exige un). */
-  getAccessCode: () => string;
-  /**
-   * Appelé quand le serveur réclame le code d'accès : affiche la saisie et
-   * résout `true` quand un nouveau code a été saisi (la requête est alors rejouée).
-   */
-  requestAccessCode: (invalid: boolean) => Promise<boolean>;
+  /** Appelé quand la session a expiré (ou a été fermée par un administrateur) : retour à l'écran de connexion. */
+  onSessionLost: () => void;
 }
 
-const ACCESS_ERRORS = ['access_code_required', 'access_code_invalid'];
+/** Filtre « agence » d'un administrateur (`null` = toutes les agences). Ignoré pour un compte d'agence. */
+type AgencyFilter = number | null | undefined;
+
+function query(params: Record<string, string | number | boolean | null | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const key of Object.keys(params)) {
+    const value = params[key];
+    if (value !== undefined && value !== null && value !== '' && value !== false) qs.set(key, String(value));
+  }
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
 
 export class ApiClient {
   constructor(private readonly options: IApiClientOptions) {}
 
-  private headers(json: boolean): Record<string, string> {
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (json) headers['Content-Type'] = 'application/json';
-    const code = this.options.getAccessCode();
-    if (code) headers['X-Access-Code'] = encodeURIComponent(code);
-    return headers;
-  }
-
   private async raw(method: string, path: string, body?: unknown): Promise<Response> {
-    for (let attempt = 0; ; attempt++) {
-      let res: Response;
-      try {
-        res = await fetch(path, {
-          method,
-          headers: this.headers(body !== undefined),
-          body: body === undefined ? undefined : JSON.stringify(body),
-          credentials: 'same-origin',
-        });
-      } catch {
-        throw new ApiError(0, 'network', 'Serveur injoignable. Vérifiez la connexion réseau puis réessayez.');
-      }
-      if (res.ok) return res;
-
-      let payload: { error?: string; message?: string; roller?: IRoller } = {};
-      try {
-        payload = await res.json();
-      } catch {
-        /* réponse non JSON */
-      }
-      const error = payload.error ?? 'http_error';
-      if (res.status === 401 && ACCESS_ERRORS.includes(error) && attempt < 5) {
-        if (await this.options.requestAccessCode(error === 'access_code_invalid')) continue;
-      }
-      const message =
-        payload.message ??
-        (res.status === 429 ? 'Trop de tentatives. Patientez quelques minutes.' : `Erreur serveur (${res.status}).`);
-      throw new ApiError(res.status, error, message, payload.roller);
+    const headers: Record<string, string> = { Accept: 'application/json', 'X-Requested-With': 'mewa-rollers' };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    let res: Response;
+    try {
+      res = await fetch(path, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        credentials: 'same-origin',
+      });
+    } catch {
+      throw new ApiError(0, 'network', 'Serveur injoignable. Vérifiez la connexion réseau puis réessayez.');
     }
+    if (res.ok) return res;
+
+    let payload: { error?: string; message?: string; roller?: IRoller } = {};
+    try {
+      payload = await res.json();
+    } catch {
+      /* réponse non JSON */
+    }
+    const error = payload.error ?? 'http_error';
+    if (error === 'auth_required' || error === 'password_change_required') this.options.onSessionLost();
+    const message =
+      payload.message ??
+      (res.status === 429 ? 'Trop de tentatives. Patientez quelques minutes.' : `Erreur serveur (${res.status}).`);
+    throw new ApiError(res.status, error, message, payload.roller);
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await this.raw(method, path, body);
+    if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
 
-  public stats(): Promise<IStats> {
-    return this.request('GET', '/api/stats');
+  // ---------- Connexion ----------
+
+  /** Utilisateur connecté, ou `null` sans session valide. */
+  public async me(): Promise<IUser | null> {
+    return (await this.request<{ user: IUser | null }>('GET', '/api/auth/me')).user;
   }
 
-  /** Nom du poste (enregistré avec chaque scan) et format des codes-barres. */
+  public async login(username: string, password: string): Promise<IUser> {
+    return (await this.request<{ user: IUser }>('POST', '/api/auth/login', { username, password })).user;
+  }
+
+  public async logout(): Promise<void> {
+    await this.request('POST', '/api/auth/logout');
+  }
+
+  public async changePassword(currentPassword: string, newPassword: string): Promise<IUser> {
+    return (await this.request<{ user: IUser }>('POST', '/api/auth/password', { currentPassword, newPassword })).user;
+  }
+
+  // ---------- Rollers et mouvements ----------
+
+  public stats(agency?: AgencyFilter): Promise<IStats> {
+    return this.request('GET', `/api/stats${query({ agency })}`);
+  }
+
+  /** Format des codes-barres, délai de retard et raisons de maintenance. */
   public info(): Promise<IServerInfo> {
     return this.request('GET', '/api/info');
   }
 
-  public rollers(params: { status?: string; q?: string; includeArchived?: boolean } = {}): Promise<IRoller[]> {
-    const qs = new URLSearchParams();
-    if (params.status) qs.set('status', params.status);
-    if (params.q) qs.set('q', params.q);
-    if (params.includeArchived) qs.set('includeArchived', 'true');
-    const query = qs.toString();
-    return this.request('GET', `/api/rollers${query ? '?' + query : ''}`);
+  public rollers(params: { status?: string; q?: string; includeArchived?: boolean; agency?: AgencyFilter } = {}): Promise<IRoller[]> {
+    return this.request('GET', `/api/rollers${query(params)}`);
   }
 
   public roller(code: string): Promise<IRollerDetail> {
     return this.request('GET', `/api/rollers/${encodeURIComponent(code)}`);
   }
 
-  public createRollers(input: { count: number; label?: string; notes?: string }): Promise<IRoller[]> {
+  public createRollers(input: { count: number; label?: string; notes?: string; agencyId?: number }): Promise<IRoller[]> {
     return this.request('POST', '/api/rollers', input);
   }
 
-  public updateRoller(code: string, input: { label?: string; notes?: string; archived?: boolean }): Promise<IRoller> {
+  public updateRoller(
+    code: string,
+    input: { label?: string; notes?: string; archived?: boolean; agencyId?: number },
+  ): Promise<IRoller> {
     return this.request('PATCH', `/api/rollers/${encodeURIComponent(code)}`, input);
+  }
+
+  /** Mise en maintenance (ou changement des raisons d'une maintenance en cours). */
+  public startMaintenance(code: string, reasons: string[]): Promise<IMovementResult> {
+    return this.request('POST', `/api/rollers/${encodeURIComponent(code)}/maintenance`, { reasons });
+  }
+
+  public endMaintenance(code: string): Promise<IMovementResult> {
+    return this.request('DELETE', `/api/rollers/${encodeURIComponent(code)}/maintenance`);
   }
 
   public scan(code: string): Promise<IScanResult> {
     return this.request('POST', '/api/scans', { code });
   }
 
-  public cancelMovement(id: number): Promise<{ movement: IMovement; roller: IRoller }> {
+  public cancelMovement(id: number): Promise<IMovementResult> {
     return this.request('POST', `/api/movements/${id}/cancel`);
   }
 
-  public movements(params: { code?: string; limit?: number; before?: number; from?: string } = {}): Promise<IMovement[]> {
-    const qs = new URLSearchParams();
-    if (params.code) qs.set('code', params.code);
-    if (params.limit) qs.set('limit', String(params.limit));
-    if (params.before) qs.set('before', String(params.before));
-    if (params.from) qs.set('from', params.from);
-    return this.request('GET', `/api/movements?${qs.toString()}`);
+  public movements(
+    params: { code?: string; limit?: number; before?: number; from?: string; agency?: AgencyFilter } = {},
+  ): Promise<IMovement[]> {
+    return this.request('GET', `/api/movements${query(params)}`);
   }
 
-  public async exportMovementsCsv(from?: string): Promise<Blob> {
-    const qs = from ? `?from=${encodeURIComponent(from)}` : '';
-    const res = await this.raw('GET', `/api/export/movements.csv${qs}`);
+  public async exportMovementsCsv(from?: string, agency?: AgencyFilter): Promise<Blob> {
+    const res = await this.raw('GET', `/api/export/movements.csv${query({ from, agency })}`);
     return res.blob();
+  }
+
+  // ---------- Administration ----------
+
+  public overview(): Promise<IOverview> {
+    return this.request('GET', '/api/admin/overview');
+  }
+
+  public agencies(): Promise<IAgencyAdmin[]> {
+    return this.request('GET', '/api/admin/agencies');
+  }
+
+  public createAgency(input: { code: string; city: string }): Promise<IAgency> {
+    return this.request('POST', '/api/admin/agencies', input);
+  }
+
+  public updateAgency(id: number, input: { code?: string; city?: string }): Promise<IAgency> {
+    return this.request('PATCH', `/api/admin/agencies/${id}`, input);
+  }
+
+  public deleteAgency(id: number): Promise<void> {
+    return this.request('DELETE', `/api/admin/agencies/${id}`);
+  }
+
+  public users(): Promise<IUser[]> {
+    return this.request('GET', '/api/admin/users');
+  }
+
+  public createUser(input: { username: string; password: string; role: Role; agencyId?: number | null }): Promise<IUser> {
+    return this.request('POST', '/api/admin/users', input);
+  }
+
+  public updateUser(id: number, input: { password?: string; role?: Role; agencyId?: number | null }): Promise<IUser> {
+    return this.request('PATCH', `/api/admin/users/${id}`, input);
+  }
+
+  public deleteUser(id: number): Promise<void> {
+    return this.request('DELETE', `/api/admin/users/${id}`);
   }
 }

@@ -3,7 +3,14 @@
 import type { IMovement } from '../api';
 import { clear, h, icon } from '../dom';
 import { formatDay, formatTime, startOfDay } from '../format';
-import { emptyState, fire, IAppContext, IView, spinner } from '../ui';
+import { agencyFilter, emptyState, fire, IAppContext, IView, reasonsText, spinner } from '../ui';
+
+const KINDS: Record<IMovement['kind'], { label: string; icon: string }> = {
+  out: { label: 'Départ', icon: 'out' },
+  in: { label: 'Retour', icon: 'in' },
+  maintenance_start: { label: 'Maintenance', icon: 'wrench' },
+  maintenance_end: { label: 'Réparé', icon: 'check' },
+};
 
 const PERIODS: { id: string; label: string; daysAgo: number | null }[] = [
   { id: 'today', label: "Aujourd'hui", daysAgo: 0 },
@@ -53,7 +60,7 @@ export function createHistoryView(ctx: IAppContext): IView {
   const search = h('input', {
     type: 'search',
     className: 'mrt-input mrt-search-input',
-    placeholder: 'Filtrer par code ou libellé…',
+    placeholder: 'Filtrer par code, libellé ou utilisateur…',
     'aria-label': 'Filtrer',
     onInput: () => {
       filterText = search.value.trim().toLowerCase();
@@ -69,7 +76,7 @@ export function createHistoryView(ctx: IAppContext): IView {
       onClick: () => {
         exportBtn.disabled = true;
         ctx.api
-          .exportMovementsCsv(fromIso())
+          .exportMovementsCsv(fromIso(), ctx.agencyFilter)
           .then((blob) => {
             const url = URL.createObjectURL(blob);
             const a = h('a', { href: url, download: `mouvements-rollers-${new Date().toISOString().slice(0, 10)}.csv` });
@@ -92,7 +99,7 @@ export function createHistoryView(ctx: IAppContext): IView {
 
   function matches(m: IMovement): boolean {
     if (!filterText) return true;
-    return [m.code, m.label].some((v) => (v ?? '').toLowerCase().indexOf(filterText) >= 0);
+    return [m.code, m.label, m.agent, m.agency.name].some((v) => (v ?? '').toLowerCase().indexOf(filterText) >= 0);
   }
 
   function render(): void {
@@ -116,17 +123,19 @@ export function createHistoryView(ctx: IAppContext): IView {
           'li',
           { className: `mrt-history-item${m.cancelled ? ' mrt-cancelled' : ''}` },
           h('span', { className: 'mrt-history-time' }, formatTime(m.scannedAt)),
-          h(
-            'span',
-            { className: `mrt-dir mrt-dir-${m.direction}` },
-            icon(m.direction === 'out' ? 'out' : 'in'),
-            m.direction === 'out' ? 'Départ' : 'Retour',
-          ),
+          h('span', { className: `mrt-dir mrt-dir-${m.kind}` }, icon(KINDS[m.kind].icon), KINDS[m.kind].label),
           h(
             'span',
             { className: 'mrt-history-roller' },
             h('button', { type: 'button', className: 'mrt-link mrt-code', onClick: () => ctx.showRoller(m.code) }, m.code),
             m.label ? h('span', { className: 'mrt-sub' }, m.label) : null,
+            m.reasons.length ? h('span', { className: 'mrt-sub' }, `À réparer : ${reasonsText(m.reasons, ctx.info)}`) : null,
+          ),
+          h(
+            'span',
+            { className: 'mrt-history-who' },
+            m.agent ?? '',
+            ctx.isAdmin && ctx.agencyFilter === null ? h('span', { className: 'mrt-sub' }, m.agency.name) : null,
           ),
           h(
             'span',
@@ -168,7 +177,7 @@ export function createHistoryView(ctx: IAppContext): IView {
     }
     try {
       const before = append && movements.length ? movements[movements.length - 1].id : undefined;
-      const page = await ctx.api.movements({ from: fromIso(), limit: PAGE, before });
+      const page = await ctx.api.movements({ from: fromIso(), limit: PAGE, before, agency: ctx.agencyFilter });
       if (t !== token) return;
       applyPage(page, append);
     } catch (err) {
@@ -178,9 +187,11 @@ export function createHistoryView(ctx: IAppContext): IView {
     }
   }
 
+  const agencyPicker = ctx.isAdmin ? agencyFilter(ctx) : undefined;
   const root = h(
     'div',
     { className: 'mrt-view mrt-history-view' },
+    agencyPicker ? h('div', { className: 'mrt-view-head' }, agencyPicker.el) : null,
     h(
       'div',
       { className: 'mrt-toolbar' },
@@ -201,6 +212,7 @@ export function createHistoryView(ctx: IAppContext): IView {
     el: root,
     activate() {
       active = true;
+      if (agencyPicker) agencyPicker.sync();
       if (stale) fire(load());
     },
     deactivate() {

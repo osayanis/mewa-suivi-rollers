@@ -1,4 +1,5 @@
 // Configuration lue depuis les variables d'environnement (voir .env.example).
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 function int(name, fallback) {
@@ -15,19 +16,24 @@ export function loadConfig(overrides = {}) {
     dbPath: process.env.DB_PATH ?? './data/rollers.db',
     // Dossier de l'interface web construite (frontend/dist). Dans l'image Docker : /app/public.
     publicDir: process.env.PUBLIC_DIR ?? fileURLToPath(new URL('../public', import.meta.url)),
-    // Code d'accès partagé, demandé une fois par appareil. Vide = pas de code (réseau interne de confiance).
-    accessCode: (process.env.ACCESS_CODE ?? '').trim(),
-    // Nom du poste enregistré avec chaque scan (un seul PC pour l'instant).
-    stationName: (process.env.STATION_NAME ?? 'GS75 Toussieu').trim().slice(0, 80) || 'GS75 Toussieu',
+    // Compte administrateur créé au premier démarrage (s'il n'existe encore aucun administrateur).
+    // Sans ADMIN_PASSWORD, un mot de passe provisoire est généré et affiché dans le journal du serveur.
+    adminUsername: (process.env.ADMIN_USERNAME ?? 'admin').trim() || 'admin',
+    adminPassword: process.env.ADMIN_PASSWORD ?? '',
+    // Une session reste ouverte tant qu'elle sert au moins une fois tous les SESSION_DAYS jours.
+    sessionDays: int('SESSION_DAYS', 30),
     codePrefix: (process.env.CODE_PREFIX ?? 'ROL').toUpperCase(),
     codeDigits: int('CODE_DIGITS', 6),
     // Un même roller relu dans ce délai est ignoré : évite qu'une double lecture accidentelle de la douchette
     // enregistre un départ puis un retour. Volontairement très court pour qu'un roller puisse repartir aussitôt.
     duplicateWindowSeconds: int('DUPLICATE_WINDOW_SECONDS', 2),
     // Au-delà de ce nombre de jours en transit, un roller est signalé "en retard".
-    overdueDays: int('OVERDUE_DAYS', 7),
+    overdueDays: int('OVERDUE_DAYS', 14),
     ...overrides,
   };
+  // Mot de passe administrateur provisoire, écrit à côté de la base jusqu'à son changement.
+  config.initialCredentialsFile =
+    config.dbPath === ':memory:' ? null : join(dirname(config.dbPath), 'identifiants-admin-initial.txt');
 
   // Seules des lettres non ambiguës entre claviers AZERTY et QWERTY sont autorisées dans le préfixe
   // (les douchettes émulent un clavier : A/Q, Z/W et M changent de place selon la disposition).

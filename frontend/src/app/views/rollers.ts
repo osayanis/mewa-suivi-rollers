@@ -1,13 +1,45 @@
 // Écran « Rollers » : vue d'ensemble (sur site / en transit), gestion du parc et impression des étiquettes.
 
-import type { IRoller, IRollerDetail, IStats } from '../api';
+import type { IMovement, IRoller, IRollerDetail, IStats } from '../api';
 import { code128Svg } from '../barcode/code128';
 import { clear, h, icon } from '../dom';
 import { formatDateTime, plural } from '../format';
 import { LABEL_FORMATS, LabelFormat, printLabels } from '../labels';
-import { emptyState, field, fire, IAppContext, IView, sinceText, spinner, statusBadge } from '../ui';
+import { endMaintenance, openMaintenanceDialog } from '../maintenance';
+import {
+  agencyFilter,
+  agencySelect,
+  emptyState,
+  field,
+  fire,
+  IAppContext,
+  IView,
+  reasonsText,
+  selectedAgency,
+  sinceText,
+  spinner,
+  statusBadge,
+} from '../ui';
 
-type Filter = 'all' | 'on_site' | 'in_transit' | 'overdue' | 'archived';
+type Filter = 'all' | 'on_site' | 'in_transit' | 'overdue' | 'maintenance' | 'archived';
+
+const MOVEMENT_TITLES: Record<IMovement['kind'], string> = {
+  out: 'Départ',
+  in: 'Retour sur site',
+  maintenance_start: 'Mise en maintenance',
+  maintenance_end: 'Remis en service',
+};
+const MOVEMENT_ICONS: Record<IMovement['kind'], string> = {
+  out: 'out',
+  in: 'in',
+  maintenance_start: 'wrench',
+  maintenance_end: 'check',
+};
+
+function sinceLabel(r: IRoller): string {
+  if (r.status === 'maintenance') return 'En maintenance depuis';
+  return r.status === 'in_transit' ? 'Parti depuis' : 'Sur site depuis';
+}
 
 export interface IRollersView extends IView {
   showRoller(code: string): void;
@@ -47,6 +79,7 @@ export function createRollersView(ctx: IAppContext): IRollersView {
       kpi('on_site', stats.onSite, 'Sur site', 'onsite', 'home'),
       kpi('in_transit', stats.inTransit, 'En transit', 'transit', 'truck'),
       kpi('overdue', stats.overdue, `En retard (> ${stats.overdueDays} j)`, 'overdue', 'clock'),
+      kpi('maintenance', stats.maintenance, 'En maintenance', 'maintenance', 'wrench'),
       kpi('all', stats.total, 'Total du parc', 'total', 'list'),
     );
   }
@@ -70,6 +103,7 @@ export function createRollersView(ctx: IAppContext): IRollersView {
     { id: 'on_site', label: 'Sur site' },
     { id: 'in_transit', label: 'En transit' },
     { id: 'overdue', label: 'En retard' },
+    { id: 'maintenance', label: 'En maintenance' },
     { id: 'archived', label: 'Archivés' },
   ];
   const chipBar = h('div', { className: 'mrt-chips', role: 'group', 'aria-label': 'Filtrer' });
@@ -125,6 +159,9 @@ export function createRollersView(ctx: IAppContext): IRollersView {
     selectAll.indeterminate = n > 0 && !selectAll.checked;
   }
 
+  // Administrateur sur « Toutes les agences » : une colonne indique l'agence de chaque roller.
+  const showAgencyColumn = (): boolean => ctx.isAdmin && ctx.agencyFilter === null;
+
   function renderList(): void {
     clear(listHost);
     if (rollers.length === 0) {
@@ -169,8 +206,14 @@ export function createRollersView(ctx: IAppContext): IRollersView {
             h('button', { type: 'button', className: 'mrt-link mrt-code', onClick: () => showRoller(r.code) }, r.code),
             r.label ? h('span', { className: 'mrt-sub' }, r.label) : null,
           ),
-          h('td', { className: 'mrt-td-status' }, statusBadge(r)),
-          h('td', { className: 'mrt-td-since', 'data-label': r.status === 'in_transit' ? 'Parti depuis' : 'Sur site depuis' }, sinceText(r)),
+          showAgencyColumn() ? h('td', { className: 'mrt-td-agency', 'data-label': 'Agence' }, r.agency.name) : null,
+          h(
+            'td',
+            { className: 'mrt-td-status' },
+            statusBadge(r),
+            r.status === 'maintenance' ? h('span', { className: 'mrt-sub' }, reasonsText(r.maintenanceReasons, ctx.info)) : null,
+          ),
+          h('td', { className: 'mrt-td-since', 'data-label': sinceLabel(r) }, sinceText(r)),
           h(
             'td',
             { className: 'mrt-td-last', 'data-label': 'Dernier scan' },
@@ -191,6 +234,7 @@ export function createRollersView(ctx: IAppContext): IRollersView {
             null,
             h('th', { className: 'mrt-td-check' }, h('label', { className: 'mrt-check-hit' }, selectAll)),
             h('th', null, 'Roller'),
+            showAgencyColumn() ? h('th', null, 'Agence') : null,
             h('th', null, 'Statut'),
             h('th', null, 'Depuis'),
             h('th', null, 'Dernier scan'),
@@ -218,9 +262,10 @@ export function createRollersView(ctx: IAppContext): IRollersView {
     }
     try {
       const status = filter === 'archived' || filter === 'all' ? undefined : filter;
+      const agency = ctx.agencyFilter;
       const [s, list] = await Promise.all([
-        ctx.api.stats(),
-        ctx.api.rollers({ status, q: query || undefined, includeArchived: filter === 'archived' }),
+        ctx.api.stats(agency),
+        ctx.api.rollers({ status, q: query || undefined, includeArchived: filter === 'archived', agency }),
       ]);
       if (token !== loadToken) return;
       stats = s;
@@ -252,6 +297,8 @@ export function createRollersView(ctx: IAppContext): IRollersView {
     const count = h('input', { type: 'number', className: 'mrt-input', min: '1', max: '200', value: '1', inputMode: 'numeric' });
     const label = h('input', { type: 'text', className: 'mrt-input', maxLength: 80, placeholder: 'Ex. : Roller linge' });
     const notes = h('textarea', { className: 'mrt-input', rows: 2, maxLength: 500, placeholder: 'Facultatif' });
+    // L'administrateur choisit l'agence ; un compte d'agence crée toujours dans la sienne.
+    const agency = ctx.isAdmin ? agencySelect(ctx.agencies, ctx.agencyFilter) : undefined;
     const error = h('p', { className: 'mrt-form-error', role: 'alert' });
     const submitBtn = h('button', { type: 'submit', className: 'mrt-btn mrt-btn-primary' }, 'Créer et générer les codes');
     const formEl = h(
@@ -266,10 +313,16 @@ export function createRollersView(ctx: IAppContext): IRollersView {
             count.focus();
             return;
           }
+          const agencyId = agency ? selectedAgency(agency) : undefined;
+          if (agency && agencyId === null) {
+            error.textContent = 'Choisissez l’agence des nouveaux rollers.';
+            agency.focus();
+            return;
+          }
           submitBtn.disabled = true;
           error.textContent = '';
           ctx.api
-            .createRollers({ count: n, label: label.value, notes: notes.value })
+            .createRollers({ count: n, label: label.value, notes: notes.value, agencyId: agencyId ?? undefined })
             .then((created) => {
               close();
               ctx.toast(`${plural(created.length, 'roller créé', 'rollers créés')}.`, 'success');
@@ -282,6 +335,7 @@ export function createRollersView(ctx: IAppContext): IRollersView {
             });
         },
       },
+      agency ? field('Agence', agency) : null,
       h(
         'div',
         { className: 'mrt-form-row' },
@@ -442,21 +496,117 @@ export function createRollersView(ctx: IAppContext): IRollersView {
       history.appendChild(
         h(
           'li',
-          { className: `mrt-timeline-item mrt-timeline-${m.direction}${m.cancelled ? ' mrt-cancelled' : ''}` },
-          h('span', { className: 'mrt-timeline-dot' }, icon(m.direction === 'out' ? 'out' : 'in')),
+          { className: `mrt-timeline-item mrt-timeline-${m.kind}${m.cancelled ? ' mrt-cancelled' : ''}` },
+          h('span', { className: 'mrt-timeline-dot' }, icon(MOVEMENT_ICONS[m.kind])),
           h(
             'div',
             null,
             h(
               'p',
               { className: 'mrt-timeline-title' },
-              m.direction === 'out' ? 'Départ' : 'Retour sur site',
+              MOVEMENT_TITLES[m.kind],
               m.cancelled ? h('span', { className: 'mrt-badge mrt-badge-archived' }, 'Annulé') : null,
             ),
-            h('p', { className: 'mrt-sub' }, formatDateTime(m.scannedAt)),
+            m.reasons.length ? h('p', { className: 'mrt-sub' }, reasonsText(m.reasons, ctx.info)) : null,
+            h('p', { className: 'mrt-sub' }, [formatDateTime(m.scannedAt), m.agent ? ` · ${m.agent}` : ''].join('')),
           ),
         ),
       );
+    }
+
+    // Après une action, la fiche est rouverte à jour.
+    const reopen = (): void => {
+      close();
+      showRoller(d.code);
+    };
+
+    // Maintenance : mise en maintenance (sur site), modification des raisons ou remise en service.
+    const maintenance = h('div', { className: 'mrt-detail-maintenance' });
+    if (!d.archived && d.status === 'maintenance') {
+      const repaired = h(
+        'button',
+        {
+          type: 'button',
+          className: 'mrt-btn mrt-btn-primary',
+          onClick: () => {
+            repaired.disabled = true;
+            fire(
+              endMaintenance(ctx, d).then((r) => {
+                if (r) reopen();
+                else repaired.disabled = false;
+              }),
+            );
+          },
+        },
+        icon('check'),
+        'Remettre en service',
+      );
+      maintenance.append(
+        h(
+          'div',
+          { className: 'mrt-maintenance-box' },
+          h('p', { className: 'mrt-maintenance-title' }, icon('wrench'), 'En maintenance'),
+          h('p', null, `À réparer : ${reasonsText(d.maintenanceReasons, ctx.info)}`),
+          h('p', { className: 'mrt-sub' }, `Depuis le ${formatDateTime(d.maintenanceSince)}`),
+          h(
+            'div',
+            { className: 'mrt-form-actions' },
+            h(
+              'button',
+              { type: 'button', className: 'mrt-btn mrt-btn-secondary', onClick: () => openMaintenanceDialog(ctx, d, reopen) },
+              'Modifier les raisons',
+            ),
+            repaired,
+          ),
+        ),
+      );
+    } else if (!d.archived) {
+      const inTransit = d.status === 'in_transit';
+      maintenance.append(
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'mrt-btn mrt-btn-secondary',
+            disabled: inTransit,
+            onClick: () => openMaintenanceDialog(ctx, d, reopen),
+          },
+          icon('wrench'),
+          'Mettre en maintenance',
+        ),
+      );
+      if (inTransit) maintenance.append(h('p', { className: 'mrt-hint' }, 'Le roller est en transit : scannez son retour avant.'));
+    }
+
+    // Administrateur : transfert du roller vers une autre agence.
+    let transfer: HTMLElement | null = null;
+    if (ctx.isAdmin) {
+      const select = agencySelect(ctx.agencies, d.agency.id);
+      const transferBtn = h(
+        'button',
+        {
+          type: 'button',
+          className: 'mrt-btn mrt-btn-secondary',
+          onClick: () => {
+            const target = selectedAgency(select);
+            if (target === null || target === d.agency.id) return;
+            transferBtn.disabled = true;
+            ctx.api
+              .updateRoller(d.code, { agencyId: target })
+              .then((r) => {
+                ctx.toast(`${r.code} transféré à ${r.agency.name}.`, 'success');
+                ctx.notifyChanged();
+                reopen();
+              })
+              .catch((err: unknown) => {
+                transferBtn.disabled = false;
+                ctx.toast(err instanceof Error ? err.message : 'Transfert impossible.', 'error');
+              });
+          },
+        },
+        'Transférer',
+      );
+      transfer = h('div', { className: 'mrt-transfer' }, field('Agence du roller', select), transferBtn);
     }
 
     body.append(
@@ -471,7 +621,9 @@ export function createRollersView(ctx: IAppContext): IRollersView {
           h(
             'dl',
             { className: 'mrt-dl' },
-            h('dt', null, d.status === 'in_transit' ? 'Parti depuis' : 'Sur site depuis'),
+            h('dt', null, 'Agence'),
+            h('dd', null, d.agency.name),
+            h('dt', null, sinceLabel(d)),
             h('dd', null, sinceText(d)),
             h('dt', null, 'Créé le'),
             h('dd', null, formatDateTime(d.createdAt)),
@@ -494,15 +646,26 @@ export function createRollersView(ctx: IAppContext): IRollersView {
         'div',
         { className: 'mrt-detail-cols' },
         h('section', null, h('h3', { className: 'mrt-section-title' }, 'Historique'), history),
-        h('section', null, h('h3', { className: 'mrt-section-title' }, 'Informations'), editForm, h('div', { className: 'mrt-detail-danger' }, archiveBtn)),
+        h(
+          'section',
+          null,
+          h('h3', { className: 'mrt-section-title' }, 'Maintenance'),
+          maintenance,
+          h('h3', { className: 'mrt-section-title mrt-section-gap' }, 'Informations'),
+          editForm,
+          transfer,
+          h('div', { className: 'mrt-detail-danger' }, archiveBtn),
+        ),
       ),
     );
   }
 
   // ---------- Assemblage ----------
+  const agencyPicker = ctx.isAdmin ? agencyFilter(ctx) : undefined;
   const root = h(
     'div',
     { className: 'mrt-view mrt-rollers' },
+    agencyPicker ? h('div', { className: 'mrt-view-head' }, agencyPicker.el) : null,
     kpis,
     h(
       'div',
@@ -526,6 +689,7 @@ export function createRollersView(ctx: IAppContext): IRollersView {
     el: root,
     activate() {
       active = true;
+      if (agencyPicker) agencyPicker.sync();
       fire(load(stale && rollers.length === 0));
       // Rafraîchissement périodique (scans faits sur d'autres postes).
       pollTimer = window.setInterval(() => {
