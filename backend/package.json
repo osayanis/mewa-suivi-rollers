@@ -1,6 +1,6 @@
 {
   "name": "mewa-roller-tracker-api",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "private": true,
   "description": "API de suivi des rollers Mewa (départs / retours par scan de code-barres)",
   "type": "module",
