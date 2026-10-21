@@ -35,10 +35,10 @@
 | **Maintenance** | Un roller abîmé est mis en maintenance (paroi, roulettes, plateaux) : il ne peut plus repartir avant sa remise en service. |
 | **Lisible de loin** | Écran bleu pour un départ, vert pour un retour, violet pour une maintenance, rouge pour une erreur, avec un bip différent. |
 | **Retards signalés** | Un roller en transit depuis plus de **14 jours** passe « en retard ». |
-| **Rescan vérifié** | Un roller rescanné moins de **24 heures** après son dernier scan affiche « déjà scanné le … à …h…, êtes-vous certain ? ». **Oui** (ou Entrée) l'enregistre, **Non** l'abandonne. |
+| **Rescan vérifié** | Un roller rescanné moins de **24 heures** après son dernier scan ouvre une question au centre de l'écran, sur fond assombri : « déjà scanné le … à …h…, êtes-vous certain ? ». Il faut répondre **Oui** ou **Non** pour continuer ; un code scanné pendant la question est ignoré. |
 | **Erreurs rattrapées** | Bouton « Annuler ». Une double lecture accidentelle de la douchette est ignorée. |
 | **Étiquettes prêtes à imprimer** | Codes-barres générés à la création, sur imprimante d'étiquettes ou planche A4. |
-| **Rien à installer sur le poste** | Un navigateur suffit, sur PC avec douchette, tablette ou smartphone (mode caméra). |
+| **Rien à installer sur le poste** | Un navigateur suffit : PC avec douchette, terminal **Zebra** (lecteur intégré), tablette ou smartphone (mode caméra). L'affichage s'adapte dès 320 px de large, en portrait comme en paysage. |
 
 ## Fonctionnement
 
@@ -201,6 +201,7 @@ Après une modification : `docker compose up -d`.
   - **planche A4 de 3 × 8** étiquettes autocollantes 70 × 37 mm.
   - Imprimez à **100 %**, sans « ajuster à la page ». En milieu industriel, préférez des étiquettes polyester ou plastifiées.
 - **Douchettes** : tout modèle USB ou Bluetooth en mode clavier, avec le Code 128 activé. Le suffixe Entrée est facultatif.
+- **Terminaux Zebra** (TC21, TC52, MC3300…) : ouvrez l'application dans Chrome et réglez **DataWedge** en sortie clavier (*Keystroke output*), Code 128 activé. Les codes lus arrivent dans la zone de scan comme avec une douchette.
 - **Robustesse** :
   - une douchette réglée en QWERTY sur un PC en AZERTY fonctionne quand même (`ROLàààà&é` est corrigé en `ROL000012`) ;
   - le scan arrive dans la bonne zone même si le curseur est ailleurs.
