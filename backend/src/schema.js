@@ -2,19 +2,21 @@
 //
 // Version 1 : un seul poste (rollers + mouvements).
 // Version 2 : agences, comptes utilisateurs, sessions, maintenance des rollers.
+// Version 3 : villes des agences renseignées, agence GS18 Saarlouis.
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
-// Agences créées avec une base neuve. Les villes inconnues se renseignent dans le panneau admin.
+// Agences Mewa, créées avec une base neuve et ajoutées aux bases existantes (version 3).
 export const DEFAULT_AGENCIES = [
+  { code: 'GS18', city: 'Saarlouis' },
+  { code: 'GS60', city: 'Binche' },
+  { code: 'GS74', city: 'Spay' },
   { code: 'GS75', city: 'Toussieu' },
-  { code: 'GS60', city: null },
-  { code: 'GS74', city: null },
-  { code: 'GS76', city: null },
-  { code: 'GS78', city: null },
+  { code: 'GS76', city: 'Rémy' },
+  { code: 'GS78', city: 'Gémenos' },
 ];
 // Agence à laquelle sont rattachés les rollers d'une base créée avant les agences (un seul poste).
 const LEGACY_AGENCY = 'GS75';
@@ -85,9 +87,17 @@ CREATE INDEX IF NOT EXISTS idx_movements_agency ON movements(agency_id, scanned_
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `;
 
+// Ajoute les agences manquantes et renseigne les villes encore vides.
+// Une ville déjà saisie dans le panneau admin n'est jamais remplacée.
 function seedAgencies(db, now) {
-  const insert = db.prepare('INSERT INTO agencies (code, city, created_at) VALUES (?, ?, ?)');
-  for (const a of DEFAULT_AGENCIES) insert.run(a.code, a.city, now);
+  const insert = db.prepare(
+    'INSERT INTO agencies (code, city, created_at) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM agencies WHERE code = ?)',
+  );
+  const fillCity = db.prepare(`UPDATE agencies SET city = ? WHERE code = ? AND (city IS NULL OR city = '')`);
+  for (const a of DEFAULT_AGENCIES) {
+    insert.run(a.code, a.city, now, a.code);
+    fillCity.run(a.city, a.code);
+  }
 }
 
 function tableExists(db, name) {
@@ -125,12 +135,11 @@ function migrate(db) {
   db.exec('PRAGMA foreign_keys = OFF');
   db.exec('BEGIN IMMEDIATE');
   try {
-    if (tableExists(db, 'rollers')) {
-      migrateFromV1(db, now);
-    } else {
-      db.exec(TABLES);
-      seedAgencies(db, now);
+    if (version < 2) {
+      if (tableExists(db, 'rollers')) migrateFromV1(db, now);
+      else db.exec(TABLES);
     }
+    seedAgencies(db, now);
     db.exec(INDEXES);
     const broken = db.prepare('PRAGMA foreign_key_check').all();
     if (broken.length) throw new Error(`Migration : ${broken.length} référence(s) invalide(s)`);

@@ -177,11 +177,11 @@ describe('administration : agences et utilisateurs', () => {
   });
   after(() => ctx.close());
 
-  test('les 5 agences sont créées au premier démarrage', async () => {
+  test('les 6 agences sont créées au premier démarrage, avec leur ville', async () => {
     const r = await ctx.adminCall('GET', '/api/admin/agencies');
     assert.deepEqual(
-      r.body.map((a) => a.code),
-      ['GS60', 'GS74', 'GS75', 'GS76', 'GS78'],
+      r.body.map((a) => a.name),
+      ['GS18 Saarlouis', 'GS60 Binche', 'GS74 Spay', 'GS75 Toussieu', 'GS76 Rémy', 'GS78 Gémenos'],
     );
     assert.equal(r.body.find((a) => a.code === 'GS75').users, 1);
   });
@@ -403,7 +403,7 @@ describe('rollers d’une agence', () => {
     assert.equal(overview.body.totals.total, 5, 'GS75 (3 actifs) + GS76 (2)');
     const gs76 = overview.body.agencies.find((a) => a.agency.code === 'GS76');
     assert.equal(gs76.onSite, 2);
-    assert.equal(overview.body.agencies.length, 5);
+    assert.equal(overview.body.agencies.length, 6);
 
     const all = await ctx.adminCall('GET', '/api/rollers');
     assert.equal(all.body.length, 5);
@@ -503,8 +503,30 @@ describe('migration d’une base v1 (un seul poste)', () => {
 
     // Réouverture : la migration ne se rejoue pas.
     const again = openDatabase(path);
-    assert.equal(again.prepare('PRAGMA user_version').get().user_version, 2);
-    assert.equal(again.prepare('SELECT COUNT(*) AS n FROM agencies').get().n, 5);
+    assert.equal(again.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(again.prepare('SELECT COUNT(*) AS n FROM agencies').get().n, 6);
+    again.close();
+  });
+});
+
+describe('migration d’une base v2 (villes des agences)', () => {
+  test('ajoute GS18, complète les villes vides sans remplacer une ville saisie', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rollers-v2-'));
+    const path = join(dir, 'rollers.db');
+    const db = openDatabase(path);
+    db.exec(`DELETE FROM agencies WHERE code = 'GS18';
+             UPDATE agencies SET city = NULL WHERE code IN ('GS60', 'GS76');
+             UPDATE agencies SET city = 'Ma ville' WHERE code = 'GS74';
+             PRAGMA user_version = 2;`);
+    db.close();
+
+    const again = openDatabase(path);
+    const cities = Object.fromEntries(again.prepare('SELECT code, city FROM agencies').all().map((a) => [a.code, a.city]));
+    assert.equal(cities.GS18, 'Saarlouis');
+    assert.equal(cities.GS60, 'Binche');
+    assert.equal(cities.GS76, 'Rémy');
+    assert.equal(cities.GS74, 'Ma ville', 'une ville saisie dans le panneau admin est conservée');
+    assert.equal(again.prepare('PRAGMA user_version').get().user_version, 3);
     again.close();
   });
 });
