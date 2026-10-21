@@ -23,6 +23,14 @@ if (admin?.generated) {
   console.log(`Compte administrateur « ${admin.username} » créé avec le mot de passe de ADMIN_PASSWORD.`);
 }
 
+// Photos envoyées mais jamais rattachées à une maintenance : nettoyage au démarrage puis toutes les heures.
+const cleanPhotos = () => {
+  const removed = app.locals.photos.cleanupOrphans();
+  if (removed) console.log(`${removed} photo(s) non utilisée(s) supprimée(s).`);
+};
+cleanPhotos();
+setInterval(cleanPhotos, 3600_000).unref();
+
 const server = app.listen(config.port, () => {
   console.log(`Suivi des rollers Mewa : http://localhost:${config.port}  (base : ${config.dbPath})`);
 });

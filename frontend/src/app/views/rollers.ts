@@ -5,7 +5,7 @@ import { code128Svg } from '../barcode/code128';
 import { clear, h, icon } from '../dom';
 import { formatDateTime, plural } from '../format';
 import { LABEL_FORMATS, LabelFormat, printLabels } from '../labels';
-import { endMaintenance, openMaintenanceDialog } from '../maintenance';
+import { endMaintenance, openMaintenanceDialog, photoThumbs } from '../maintenance';
 import {
   agencyFilter,
   agencySelect,
@@ -508,6 +508,7 @@ export function createRollersView(ctx: IAppContext): IRollersView {
               m.cancelled ? h('span', { className: 'mrt-badge mrt-badge-archived' }, 'Annulé') : null,
             ),
             m.reasons.length ? h('p', { className: 'mrt-sub' }, reasonsText(m.reasons, ctx.info)) : null,
+            photoThumbs(ctx, m.photos, true),
             h('p', { className: 'mrt-sub' }, [formatDateTime(m.scannedAt), m.agent ? ` · ${m.agent}` : ''].join('')),
           ),
         ),
@@ -519,6 +520,10 @@ export function createRollersView(ctx: IAppContext): IRollersView {
       close();
       showRoller(d.code);
     };
+
+    // Photos de la maintenance en cours (dernière mise en maintenance non annulée).
+    const currentPhotos =
+      d.status === 'maintenance' ? d.movements.find((m) => m.kind === 'maintenance_start' && !m.cancelled)?.photos ?? [] : [];
 
     // Maintenance : mise en maintenance (sur site), modification des raisons ou remise en service.
     const maintenance = h('div', { className: 'mrt-detail-maintenance' });
@@ -548,12 +553,13 @@ export function createRollersView(ctx: IAppContext): IRollersView {
           h('p', { className: 'mrt-maintenance-title' }, icon('wrench'), 'En maintenance'),
           h('p', null, `À réparer : ${reasonsText(d.maintenanceReasons, ctx.info)}`),
           h('p', { className: 'mrt-sub' }, `Depuis le ${formatDateTime(d.maintenanceSince)}`),
+          photoThumbs(ctx, currentPhotos),
           h(
             'div',
             { className: 'mrt-form-actions' },
             h(
               'button',
-              { type: 'button', className: 'mrt-btn mrt-btn-secondary', onClick: () => openMaintenanceDialog(ctx, d, reopen) },
+              { type: 'button', className: 'mrt-btn mrt-btn-secondary', onClick: () => openMaintenanceDialog(ctx, d, reopen, currentPhotos) },
               'Modifier les raisons',
             ),
             repaired,

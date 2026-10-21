@@ -12,9 +12,11 @@
   },
   "dependencies": {
     "@zxing/browser": "0.1.5",
-    "@zxing/library": "0.21.3"
+    "@zxing/library": "0.21.3",
+    "three": "0.170.0"
   },
   "devDependencies": {
+    "@types/three": "0.170.0",
     "esbuild": "0.25.10",
     "typescript": "5.8.3"
   }

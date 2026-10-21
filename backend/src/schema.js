@@ -3,11 +3,12 @@
 // Version 1 : un seul poste (rollers + mouvements).
 // Version 2 : agences, comptes utilisateurs, sessions, maintenance des rollers.
 // Version 3 : villes des agences renseignées, agence GS18 Saarlouis.
+// Version 4 : photos des maintenances.
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // Agences Mewa, créées avec une base neuve et ajoutées aux bases existantes (version 3).
 export const DEFAULT_AGENCIES = [
@@ -79,6 +80,20 @@ CREATE TABLE movements (
 );
 `;
 
+// Photos prises à la mise en maintenance (fichiers JPEG dans PHOTOS_DIR, nommés <id>.jpg).
+// Une photo est d'abord envoyée seule (movement_id vide), puis rattachée à la maintenance qu'elle illustre.
+const PHOTOS = `
+CREATE TABLE IF NOT EXISTS photos (
+  id          TEXT    PRIMARY KEY,
+  movement_id INTEGER REFERENCES movements(id),
+  reason      TEXT,
+  size        INTEGER NOT NULL,
+  created_at  TEXT    NOT NULL,
+  created_by  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_photos_movement ON photos(movement_id);
+`;
+
 const INDEXES = `
 CREATE INDEX IF NOT EXISTS idx_rollers_agency ON rollers(agency_id, status);
 CREATE INDEX IF NOT EXISTS idx_movements_roller ON movements(roller_id, scanned_at);
@@ -140,6 +155,7 @@ function migrate(db) {
       else db.exec(TABLES);
     }
     seedAgencies(db, now);
+    if (version < 4) db.exec(PHOTOS);
     db.exec(INDEXES);
     const broken = db.prepare('PRAGMA foreign_key_check').all();
     if (broken.length) throw new Error(`Migration : ${broken.length} référence(s) invalide(s)`);

@@ -55,10 +55,12 @@ export function createModal(root: HTMLElement, options: IModalOptions): () => vo
   const previouslyFocused = document.activeElement as HTMLElement | null;
   let close: () => void = () => undefined;
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      close();
-    }
+    if (e.key !== 'Escape') return;
+    // Fenêtres superposées (fiche roller puis maintenance) : Échap ne ferme que celle du dessus.
+    const open = root.querySelectorAll('.mrt-backdrop');
+    if (open[open.length - 1] !== backdrop) return;
+    e.stopPropagation();
+    close();
   };
   const dialog = h(
     'div',

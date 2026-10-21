@@ -32,7 +32,7 @@
 | **Supervision globale** | Le compte administrateur voit toutes les agences, crée les agences et gère les comptes. |
 | **Un scan, aucun clic** | La douchette lit l'étiquette et c'est enregistré. Pas de bouton, pas de touche Entrée. |
 | **Départ ou retour, automatiquement** | Un roller sur site part en transit, un roller en transit revient sur site. |
-| **Maintenance** | Un roller abîmé est mis en maintenance (paroi, roulettes, plateaux) : il ne peut plus repartir avant sa remise en service. |
+| **Maintenance** | Un roller abîmé est mis en maintenance (paroi, roulettes, plateaux), avec une **photo de la casse** guidée par un modèle 3D. Il ne peut plus repartir avant sa remise en service. |
 | **Lisible de loin** | Écran bleu pour un départ, vert pour un retour, violet pour une maintenance, rouge pour une erreur, avec un bip différent. |
 | **Retards signalés** | Un roller en transit depuis plus de **14 jours** passe « en retard ». |
 | **Rescan vérifié** | Un roller rescanné moins de **24 heures** après son dernier scan ouvre une question au centre de l'écran, sur fond assombri : « déjà scanné le … à …h…, êtes-vous certain ? ». Il faut répondre **Oui** ou **Non** pour continuer ; un code scanné pendant la question est ignoré. |
@@ -92,10 +92,19 @@ Après le scan de retour, l'agent touche **Maintenance** et coche ce qui doit ê
 - **Roulettes** : roues, freins ;
 - **Plateaux** : étagères.
 
-Plusieurs choix sont possibles. Un roller en maintenance scanné au départ est bloqué : l'écran violet propose **Remettre en service**. La maintenance se gère aussi depuis la fiche du roller (onglet Rollers).
+Plusieurs choix sont possibles. Il prend ensuite **une photo de la casse pour chaque raison cochée** :
+- un petit **modèle 3D** du roller montre la partie concernée en rouge, avec une flèche, sous le bon angle ;
+- on peut le tourner du doigt ;
+- une consigne indique où se placer, par exemple « accroupissez-vous à environ 50 cm » pour les roulettes ;
+- **Prendre la photo** ouvre l'appareil photo du terminal ou du smartphone. Sur PC, on choisit un fichier.
+
+La maintenance n'est enregistrée qu'avec toutes ses photos. Les photos sont réduites avant l'envoi (1600 px, 200 à 400 Ko). On les retrouve sur la fiche du roller et dans son historique ; un clic les agrandit.
+
+Un roller en maintenance scanné au départ est bloqué : l'écran violet propose **Remettre en service**. La maintenance se gère aussi depuis la fiche du roller (onglet Rollers).
 
 <p align="center">
-  <img src="docs/captures/maintenance.png" alt="Fenêtre de mise en maintenance" width="760">
+  <img src="docs/captures/maintenance.png" alt="Étape 1 : choix des raisons" width="49%">
+  <img src="docs/captures/maintenance-photo.png" alt="Étape 2 : photo guidée par le modèle 3D" width="49%">
 </p>
 
 ## Premier démarrage
@@ -162,6 +171,7 @@ Ouvrez ensuite **`http://<adresse-du-serveur>:8080`**.
 | `RESCAN_CONFIRM_HOURS` | Rescan demandant une confirmation s'il a lieu moins de N heures après le dernier scan (`0` = jamais) | `24` |
 | `DUPLICATE_WINDOW_SECONDS` | Double lecture accidentelle ignorée dans ce délai (`0` = désactivé) | `2` |
 | `CODE_PREFIX` · `CODE_DIGITS` | Format des codes-barres | `ROL` · `6` |
+| `PHOTOS_DIR` | Dossier des photos de maintenance | `photos/` à côté de la base |
 
 Après une modification : `docker compose up -d`.
 
@@ -227,7 +237,7 @@ cd backend && npm install && PUBLIC_DIR=../frontend/dist npm run dev
 
 | Commande | Vérifie |
 |---|---|
-| `cd backend && npm test` | API : connexion, droits par agence, administration, scans, maintenance, retards, annulation, migration, export CSV |
+| `cd backend && npm test` | API : connexion, droits par agence, administration, scans, maintenance et photos, retards, annulation, migration, export CSV |
 | `cd frontend && npm run test:barcode` | Les codes-barres générés sont relus correctement par un décodeur (ZXing) |
 | `cd frontend && npm run typecheck` | Types TypeScript |
 
@@ -251,6 +261,7 @@ cd backend && npm install && PUBLIC_DIR=../frontend/dist npm run dev
 │   │   ├── schema.js        # tables et migrations
 │   │   ├── db.js            # rollers : départ / retour / maintenance / annulation, par agence
 │   │   ├── accounts.js      # agences, utilisateurs, mots de passe, sessions
+│   │   ├── photos.js        # photos des maintenances (fichiers JPEG)
 │   │   ├── auth.js          # cookie de session, droits, limite des tentatives
 │   │   ├── codes.js         # format des codes, correction AZERTY
 │   │   └── config.js        # variables d'environnement
@@ -259,7 +270,8 @@ cd backend && npm install && PUBLIC_DIR=../frontend/dist npm run dev
     ├── index.html
     └── src/app/
         ├── views/           # Connexion, Scanner, Rollers, Historique, Supervision, Agences, Utilisateurs
-        ├── maintenance.ts   # mise en maintenance / remise en service
+        ├── maintenance.ts   # mise en maintenance en étapes (raisons, photos) / remise en service
+        ├── roller3d.ts      # modèle 3D du roller (three.js, chargé à la demande)
         ├── barcode/         # générateur Code 128 (SVG)
         ├── brand/           # logo et police Gebauer de Mewa
         ├── labels.ts        # impression des étiquettes
@@ -283,7 +295,8 @@ Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session. Les r
 | `GET` | `/api/stats` | Compteurs (sur site, en transit, en retard, en maintenance, du jour) |
 | `GET` · `POST` | `/api/rollers` | Liste (filtres `status`, `q`) · création (`count`, `label`, `agencyId` pour un admin) |
 | `GET` · `PATCH` | `/api/rollers/:code` | Fiche + historique · modification, archivage, transfert (admin) |
-| `POST` · `DELETE` | `/api/rollers/:code/maintenance` | Mise en maintenance `{ reasons }` · remise en service |
+| `POST` · `DELETE` | `/api/rollers/:code/maintenance` | Mise en maintenance `{ reasons, photos }` (une photo par raison) · remise en service |
+| `POST` · `GET` | `/api/photos[/:id]` | Envoi d'une photo JPEG (corps binaire) · affichage |
 | `GET` | `/api/movements` | Historique |
 | `GET` | `/api/export/movements.csv` | Export Excel |
 | `GET` | `/api/info` | Format des codes, délai de retard, raisons de maintenance |
@@ -296,12 +309,13 @@ Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session. Les r
 <details>
 <summary><b>Sauvegarde des données</b></summary>
 
-Toutes les données (rollers, historique, agences, comptes) tiennent dans un seul fichier SQLite, stocké dans le volume `rollers-data`. Pour faire une copie à chaud :
+Les données (rollers, historique, agences, comptes) tiennent dans un seul fichier SQLite ; les photos de maintenance sont dans le dossier `photos/` à côté. Les deux sont dans le volume `rollers-data`. Pour faire une copie à chaud :
 
 ```bash
 docker compose exec rollers node -e "new (require('node:sqlite').DatabaseSync)('/data/rollers.db').exec(\"VACUUM INTO '/data/backup.db'\")"
 docker compose cp rollers:/data/backup.db ./sauvegarde-$(date +%F).db
 docker compose exec rollers rm /data/backup.db
+docker compose cp rollers:/data/photos ./photos-$(date +%F)
 ```
 
 La sauvegarde contient les empreintes des mots de passe : conservez-la en lieu sûr.

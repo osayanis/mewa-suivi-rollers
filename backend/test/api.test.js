@@ -10,9 +10,12 @@ import { loadConfig } from '../src/config.js';
 import { openDatabase } from '../src/db.js';
 
 const ADMIN_PASSWORD = 'Admin-Test-2026';
+// Petite « photo » JPEG (seule la signature FF D8 FF est contrôlée par le serveur).
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0xff, 0xd9]);
 
 async function startServer(overrides = {}, dbPath = ':memory:') {
-  const config = loadConfig({ dbPath, publicDir: '/nonexistent', adminPassword: ADMIN_PASSWORD, ...overrides });
+  const photosDir = mkdtempSync(join(tmpdir(), 'rollers-photos-'));
+  const config = loadConfig({ dbPath, publicDir: '/nonexistent', adminPassword: ADMIN_PASSWORD, photosDir, ...overrides });
   const db = openDatabase(dbPath);
   const app = createApp(db, config);
   const admin = await app.locals.accounts.ensureAdmin();
@@ -45,13 +48,26 @@ async function startServer(overrides = {}, dbPath = ':memory:') {
           return { status: res.status, body: json, text, headers: res.headers };
         };
         call.login = (username, password) => call('POST', '/api/auth/login', { username, password });
+        // Envoi d'une photo (corps binaire) : renvoie son identifiant.
+        call.photo = async (bytes = JPEG, type = 'image/jpeg') => {
+          const res = await fetch(base + '/api/photos', {
+            method: 'POST',
+            headers: { 'Content-Type': type, 'X-Requested-With': 'mewa-rollers', Cookie: cookie },
+            body: bytes,
+          });
+          return { status: res.status, body: await res.json() };
+        };
+        call.bytes = async (path) => {
+          const res = await fetch(base + path, { headers: { Cookie: cookie } });
+          return { status: res.status, type: res.headers.get('content-type'), body: Buffer.from(await res.arrayBuffer()) };
+        };
         return call;
       };
       const close = () => {
         server.close();
         db.close();
       };
-      resolve({ server, db, client, admin, close });
+      resolve({ server, db, client, admin, close, app });
     });
   });
 }
@@ -332,22 +348,48 @@ describe('rollers d’une agence', () => {
     assert.equal(twice.status, 409);
   });
 
-  test('maintenance : une ou plusieurs raisons, scan bloqué, puis remise en service', async () => {
+  test('maintenance : une photo par raison, scan bloqué, puis remise en service', async () => {
     const none = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', { reasons: [] });
     assert.equal(none.body.error, 'missing_reasons');
-    const start = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', { reasons: ['plateaux', 'roulettes', 'inconnu'] });
+
+    const noPhoto = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', { reasons: ['roulettes'] });
+    assert.equal(noPhoto.status, 400);
+    assert.equal(noPhoto.body.error, 'photo_required');
+    assert.match(noPhoto.body.message, /roulettes/);
+
+    const p1 = (await ctx.agent.photo()).body.id;
+    const p2 = (await ctx.agent.photo()).body.id;
+    const missingOne = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', {
+      reasons: ['plateaux', 'roulettes'],
+      photos: { roulettes: p1 },
+    });
+    assert.equal(missingOne.body.error, 'photo_required', 'il faut une photo pour chaque raison');
+
+    const start = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', {
+      reasons: ['plateaux', 'roulettes', 'inconnu'],
+      photos: { roulettes: p1, plateaux: p2 },
+    });
     assert.equal(start.status, 200);
     assert.equal(start.body.roller.status, 'maintenance');
     assert.deepEqual(start.body.roller.maintenanceReasons, ['roulettes', 'plateaux']);
     assert.equal(start.body.movement.kind, 'maintenance_start');
+    assert.deepEqual(start.body.movement.photos.map((p) => p.reason).sort(), ['plateaux', 'roulettes']);
+
+    const reused = await ctx.agent('POST', '/api/rollers/ROL000001/maintenance', { reasons: ['roulettes'], photos: { roulettes: p1 } });
+    assert.equal(reused.body.error, 'invalid_photo', 'une photo déjà utilisée ne sert pas deux fois');
 
     const scan = await ctx.agent('POST', '/api/scans', { code: 'ROL000002' });
     assert.equal(scan.status, 409);
     assert.equal(scan.body.error, 'in_maintenance');
     assert.equal(scan.body.roller.code, 'ROL000002');
 
-    const edit = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', { reasons: ['paroi'] });
-    assert.deepEqual(edit.body.roller.maintenanceReasons, ['paroi']);
+    // Changement de raisons : seule la nouvelle raison demande une photo.
+    const editNoPhoto = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', { reasons: ['roulettes', 'paroi'] });
+    assert.equal(editNoPhoto.body.error, 'photo_required');
+    const p3 = (await ctx.agent.photo()).body.id;
+    const edit = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', { reasons: ['roulettes', 'paroi'], photos: { paroi: p3 } });
+    assert.deepEqual(edit.body.roller.maintenanceReasons, ['paroi', 'roulettes']);
+    assert.equal(edit.body.movement.photos.length, 3);
     const stats = await ctx.agent('GET', '/api/stats');
     assert.equal(stats.body.maintenance, 1);
     const filtered = await ctx.agent('GET', '/api/rollers?status=maintenance');
@@ -355,17 +397,52 @@ describe('rollers d’une agence', () => {
       filtered.body.map((r) => r.code),
       ['ROL000002'],
     );
+    const detail = await ctx.agent('GET', '/api/rollers/ROL000002');
+    assert.equal(detail.body.movements[0].photos.length, 3, 'la fiche du roller montre les photos');
 
     const end = await ctx.agent('DELETE', '/api/rollers/ROL000002/maintenance');
     assert.equal(end.body.roller.status, 'on_site');
     assert.deepEqual(end.body.roller.maintenanceReasons, []);
     const cancelEnd = await ctx.agent('POST', `/api/movements/${end.body.movement.id}/cancel`);
     assert.equal(cancelEnd.body.roller.status, 'maintenance', "annuler la fin de maintenance la rétablit");
-    assert.deepEqual(cancelEnd.body.roller.maintenanceReasons, ['paroi']);
+    assert.deepEqual(cancelEnd.body.roller.maintenanceReasons, ['paroi', 'roulettes']);
     await ctx.agent('DELETE', '/api/rollers/ROL000002/maintenance');
     assert.equal((await ctx.agent('POST', '/api/scans', { code: 'ROL000002' })).body.result, 'out');
-    const inTransit = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', { reasons: ['paroi'] });
+    const p4 = (await ctx.agent.photo()).body.id;
+    const inTransit = await ctx.agent('POST', '/api/rollers/ROL000002/maintenance', { reasons: ['paroi'], photos: { paroi: p4 } });
     assert.equal(inTransit.body.error, 'in_transit');
+  });
+
+  test('photos : format contrôlé, visibles seulement dans le périmètre de l’agence', async () => {
+    const png = await ctx.agent.photo(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]));
+    assert.equal(png.status, 415, 'seul le JPEG est accepté');
+    const typeFaux = await ctx.agent.photo(JPEG, 'text/plain');
+    assert.equal(typeFaux.status, 400);
+
+    const detail = await ctx.agent('GET', '/api/rollers/ROL000002');
+    const photoId = detail.body.movements.find((m) => m.photos.length).photos[0].id;
+    const own = await ctx.agent.bytes(`/api/photos/${photoId}`);
+    assert.equal(own.status, 200);
+    assert.match(own.type, /image\/jpeg/);
+    assert.deepEqual(own.body, JPEG);
+    assert.equal((await ctx.adminCall.bytes(`/api/photos/${photoId}`)).status, 200, "l'administrateur voit tout");
+
+    const other = ctx.client();
+    await other.login('agent76', 'Agence-76!');
+    assert.equal((await other.bytes(`/api/photos/${photoId}`)).status, 404, 'une autre agence ne voit pas la photo');
+    assert.equal((await other.bytes('/api/photos/..%2F..%2Fetc%2Fpasswd')).status, 404);
+    const p = (await ctx.agent.photo()).body.id;
+    const stolen = await other('POST', '/api/rollers/ROL000005/maintenance', { reasons: ['paroi'], photos: { paroi: p } });
+    assert.equal(stolen.body.error, 'invalid_photo', "on ne peut pas utiliser la photo d'un autre utilisateur");
+  });
+
+  test('photos non rattachées supprimées après 24 h', async () => {
+    const { id } = (await ctx.agent.photo()).body;
+    ctx.db.prepare('UPDATE photos SET created_at = ? WHERE id = ?').run(new Date(Date.now() - 25 * 3600_000).toISOString(), id);
+    assert.ok(ctx.app.locals.photos.cleanupOrphans() >= 1);
+    assert.equal((await ctx.agent.bytes(`/api/photos/${id}`)).status, 404);
+    const attached = ctx.db.prepare('SELECT COUNT(*) AS n FROM photos WHERE movement_id IS NOT NULL').get().n;
+    assert.ok(attached >= 3, 'les photos des maintenances sont conservées');
   });
 
   test('retard après 14 jours en transit', async () => {
@@ -511,7 +588,7 @@ describe('migration d’une base v1 (un seul poste)', () => {
 
     // Réouverture : la migration ne se rejoue pas.
     const again = openDatabase(path);
-    assert.equal(again.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(again.prepare('PRAGMA user_version').get().user_version, 4);
     assert.equal(again.prepare('SELECT COUNT(*) AS n FROM agencies').get().n, 6);
     again.close();
   });
@@ -534,7 +611,7 @@ describe('migration d’une base v2 (villes des agences)', () => {
     assert.equal(cities.GS60, 'Binche');
     assert.equal(cities.GS76, 'Rémy');
     assert.equal(cities.GS74, 'Ma ville', 'une ville saisie dans le panneau admin est conservée');
-    assert.equal(again.prepare('PRAGMA user_version').get().user_version, 3);
+    assert.equal(again.prepare('PRAGMA user_version').get().user_version, 4);
     again.close();
   });
 });
