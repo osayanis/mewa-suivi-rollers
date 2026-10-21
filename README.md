@@ -35,6 +35,7 @@
 | **Maintenance** | Un roller abîmé est mis en maintenance (paroi, roulettes, plateaux) : il ne peut plus repartir avant sa remise en service. |
 | **Lisible de loin** | Écran bleu pour un départ, vert pour un retour, violet pour une maintenance, rouge pour une erreur, avec un bip différent. |
 | **Retards signalés** | Un roller en transit depuis plus de **14 jours** passe « en retard ». |
+| **Rescan vérifié** | Un roller rescanné moins de **24 heures** après son dernier scan affiche « déjà scanné le … à …h…, êtes-vous certain ? ». **Oui** (ou Entrée) l'enregistre, **Non** l'abandonne. |
 | **Erreurs rattrapées** | Bouton « Annuler ». Une double lecture accidentelle de la douchette est ignorée. |
 | **Étiquettes prêtes à imprimer** | Codes-barres générés à la création, sur imprimante d'étiquettes ou planche A4. |
 | **Rien à installer sur le poste** | Un navigateur suffit, sur PC avec douchette, tablette ou smartphone (mode caméra). |
@@ -147,6 +148,7 @@ Ouvrez ensuite **`http://<adresse-du-serveur>:8080`**.
 | `ADMIN_PASSWORD` | Son mot de passe (vide = mot de passe provisoire généré) | *vide* |
 | `SESSION_DAYS` | Une session reste ouverte tant qu'elle sert au moins une fois dans ce délai | `30` |
 | `OVERDUE_DAYS` | Nombre de jours en transit avant le statut « en retard » | `14` |
+| `RESCAN_CONFIRM_HOURS` | Rescan demandant une confirmation s'il a lieu moins de N heures après le dernier scan (`0` = jamais) | `24` |
 | `DUPLICATE_WINDOW_SECONDS` | Double lecture accidentelle ignorée dans ce délai (`0` = désactivé) | `2` |
 | `CODE_PREFIX` · `CODE_DIGITS` | Format des codes-barres | `ROL` · `6` |
 
@@ -264,7 +266,7 @@ Toutes les routes sauf `/api/health` et `/api/auth/*` exigent une session. Les r
 | `POST` | `/api/auth/logout` | Déconnexion |
 | `GET` | `/api/auth/me` | Utilisateur connecté (`null` sans session) |
 | `POST` | `/api/auth/password` `{ currentPassword, newPassword }` | Changer son mot de passe |
-| `POST` | `/api/scans` `{ code }` | Départ si le roller est sur site, retour s'il est en transit |
+| `POST` | `/api/scans` `{ code, confirm? }` | Départ si le roller est sur site, retour s'il est en transit ; `result: "confirm"` si le dernier scan date de moins de 24 h (renvoyer avec `confirm: true`) |
 | `POST` | `/api/movements/:id/cancel` | Annuler le dernier mouvement d'un roller |
 | `GET` | `/api/stats` | Compteurs (sur site, en transit, en retard, en maintenance, du jour) |
 | `GET` · `POST` | `/api/rollers` | Liste (filtres `status`, `q`) · création (`count`, `label`, `agencyId` pour un admin) |

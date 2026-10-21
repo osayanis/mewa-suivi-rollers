@@ -266,7 +266,7 @@ export class Store {
   }
 
   // Un seul mode : le statut du roller décide du sens (sur site → départ, en transit → retour).
-  scan({ code }, scope, agent) {
+  scan({ code, confirm = false }, scope, agent) {
     if (!code) throw new HttpError(400, 'missing_code', 'Aucun code scanné.');
 
     return this.tx(() => {
@@ -294,6 +294,18 @@ export class Store {
       }
 
       const kind = row.status === 'on_site' ? 'out' : 'in';
+
+      // Rescan rapproché : rien n'est enregistré tant que l'agent n'a pas confirmé.
+      if (!confirm && elapsed !== null && elapsed < this.config.rescanConfirmHours * 3600) {
+        return {
+          result: 'confirm',
+          // Dernier scan : un départ si le roller est en transit, un retour s'il est sur site.
+          lastScan: { kind: row.status === 'in_transit' ? 'out' : 'in', at: row.last_movement_at },
+          next: kind,
+          roller: this.toRoller(row, now),
+        };
+      }
+
       const movement = this.insertMovement(row, kind, agent, now);
       this.db
         .prepare(`UPDATE rollers SET status = ?, last_movement_at = ?, last_agent = ? WHERE id = ?`)

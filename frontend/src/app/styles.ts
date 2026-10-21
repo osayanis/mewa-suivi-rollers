@@ -188,6 +188,8 @@ textarea.mrt-input { resize: vertical; }
 .mrt-result-duplicate { background: var(--mrt-pastel); color: var(--mrt-blue); }
 .mrt-result-duplicate .mrt-result-icon { background: #fff; }
 .mrt-result-maintenance { background: var(--mrt-violet); color: #fff; }
+.mrt-result-confirm { background: var(--mrt-amber); color: #fff; }
+.mrt-result-confirm .mrt-btn-light { color: var(--mrt-amber); font-weight: 700; }
 .mrt-result-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .mrt-result-cancelled { background: var(--mrt-grey-100); color: var(--mrt-coal); }
 .mrt-result-cancelled .mrt-result-icon { background: #fff; }

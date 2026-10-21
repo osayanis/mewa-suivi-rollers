@@ -27,6 +27,9 @@ export function loadConfig(overrides = {}) {
     // Un même roller relu dans ce délai est ignoré : évite qu'une double lecture accidentelle de la douchette
     // enregistre un départ puis un retour. Volontairement très court pour qu'un roller puisse repartir aussitôt.
     duplicateWindowSeconds: int('DUPLICATE_WINDOW_SECONDS', 2),
+    // Un roller rescanné moins de RESCAN_CONFIRM_HOURS heures après son dernier départ ou retour
+    // n'est enregistré qu'après confirmation de l'agent (0 = pas de confirmation).
+    rescanConfirmHours: int('RESCAN_CONFIRM_HOURS', 24),
     // Au-delà de ce nombre de jours en transit, un roller est signalé "en retard".
     overdueDays: int('OVERDUE_DAYS', 14),
     ...overrides,
