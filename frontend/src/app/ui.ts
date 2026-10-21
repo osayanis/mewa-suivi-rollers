@@ -238,3 +238,84 @@ export function agencyFilter(ctx: IAppContext): { el: HTMLElement; sync(): void 
     sync: () => fillAgencySelect(select, ctx.agencies, ctx.agencyFilter, 'Toutes les agences'),
   };
 }
+
+export interface IBlockingAction {
+  label: string;
+  icon?: string;
+  primary?: boolean;
+  onClick: () => void;
+}
+
+/**
+ * Question bloquante, au centre de l'écran sur fond assombri : on ne peut en sortir qu'en choisissant une réponse
+ * (ni croix, ni Échap, ni clic à côté).
+ *
+ * Les douchettes et les lecteurs intégrés des terminaux Zebra tapent comme un clavier et finissent souvent par
+ * Entrée : le clavier est donc ignoré, sauf si l'utilisateur a lui-même placé le focus sur un bouton avec Tab.
+ * Ainsi, un code scanné pendant la question ne vaut jamais réponse.
+ */
+export function openBlockingDialog(
+  root: HTMLElement,
+  options: { title: string; icon: string; code?: string; lines: string[]; actions: IBlockingAction[] },
+): () => void {
+  let closed = false;
+  let keyboardChosen = false;
+  const buttons = options.actions.map((a) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        className: `mrt-btn ${a.primary ? 'mrt-btn-warning' : 'mrt-btn-secondary'}`,
+        onClick: () => {
+          close();
+          a.onClick();
+        },
+      },
+      a.icon ? icon(a.icon) : null,
+      a.label,
+    ),
+  );
+  const dialog = h(
+    'div',
+    { className: 'mrt-alert', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': options.title, tabIndex: -1 },
+    h('span', { className: 'mrt-alert-icon' }, icon(options.icon)),
+    h('p', { className: 'mrt-alert-title' }, options.title),
+    options.code ? h('p', { className: 'mrt-alert-code' }, options.code) : null,
+    options.lines.map((line) => h('p', { className: 'mrt-alert-text' }, line)),
+    h('div', { className: 'mrt-alert-actions' }, buttons),
+  );
+  const backdrop = h('div', { className: 'mrt-backdrop mrt-backdrop-alert' }, dialog);
+
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Tab') {
+      // Le focus reste dans la question.
+      e.preventDefault();
+      keyboardChosen = true;
+      const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = e.shiftKey ? (i <= 0 ? buttons.length - 1 : i - 1) : (i + 1) % buttons.length;
+      buttons[next].focus();
+      return;
+    }
+    const onButton = buttons.indexOf(document.activeElement as HTMLButtonElement) >= 0;
+    if (keyboardChosen && onButton && (e.key === 'Enter' || e.key === ' ')) return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const onFocusIn = (e: FocusEvent): void => {
+    if (!dialog.contains(e.target as Node)) dialog.focus();
+  };
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('focusin', onFocusIn, true);
+    backdrop.remove();
+  };
+
+  (document.activeElement as HTMLElement | null)?.blur();
+  root.appendChild(backdrop);
+  document.addEventListener('keydown', onKey, true);
+  document.addEventListener('focusin', onFocusIn, true);
+  dialog.focus();
+  return close;
+}

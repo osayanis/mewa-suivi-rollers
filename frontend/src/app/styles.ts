@@ -149,7 +149,7 @@ textarea.mrt-input { resize: vertical; }
 
 /* ---------- Écran Scanner ---------- */
 .mrt-scanner-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 32px; align-items: start; }
-.mrt-scanner-main { display: flex; flex-direction: column; gap: 20px; }
+.mrt-scanner-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 
 .mrt-scan-box {
   border: 2px solid var(--mrt-grey-300); border-radius: var(--mrt-radius-lg); padding: 18px 18px 14px 22px;
@@ -159,7 +159,7 @@ textarea.mrt-input { resize: vertical; }
 .mrt-scan-row { display: flex; align-items: center; gap: 14px; }
 .mrt-scan-icon { width: 32px; height: 32px; color: var(--mrt-red); }
 .mrt-scan-input {
-  flex: 1 1 auto; min-width: 0; border: 0; outline: none !important; background: none; padding: 8px 0;
+  flex: 1 1 auto; min-width: 0; width: 100%; border: 0; outline: none !important; background: none; padding: 8px 0;
   font-size: 30px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
 }
 .mrt-scan-input::placeholder { color: #9a9a9a; font-weight: 400; letter-spacing: 0; text-transform: none; font-size: 24px; }
@@ -340,6 +340,29 @@ textarea.mrt-input { resize: vertical; }
 .mrt-modal-body { padding: 12px 26px 26px; overflow-y: auto; }
 .mrt-modal-foot { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; padding: 16px 26px; border-top: 1px solid var(--mrt-grey-100); }
 
+/* Question bloquante (rescan) : au centre, fond assombri, réponse obligatoire. */
+.mrt-backdrop-alert { z-index: 950; background: rgba(20, 20, 20, .78); }
+.mrt .mrt-alert:focus, .mrt .mrt-alert:focus-visible { outline: none; }
+.mrt-alert {
+  width: 100%; max-width: 480px; max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+  padding: 28px 24px 24px; background: #fff; border-radius: var(--mrt-radius-lg); border-top: 6px solid var(--mrt-amber);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .35); animation: mrt-pop .22s var(--mrt-ease); outline: none;
+}
+.mrt-alert-icon {
+  display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%;
+  background: var(--mrt-amber-bg); color: var(--mrt-amber); margin-bottom: 4px;
+}
+.mrt-alert-icon .mrt-icon { width: 34px; height: 34px; }
+.mrt-alert-title { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--mrt-amber); }
+.mrt-alert-code { font-size: 34px; font-weight: 700; letter-spacing: .04em; line-height: 1.1; overflow-wrap: anywhere; }
+.mrt-alert-text { font-size: 17px; }
+.mrt-alert-text + .mrt-alert-text { font-weight: 700; }
+.mrt-alert-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; margin-top: 14px; }
+.mrt-alert-actions .mrt-btn { min-height: 56px; font-size: 17px; }
+.mrt-btn-warning { background: var(--mrt-amber); color: #fff; }
+.mrt-btn-warning:hover:not(:disabled) { background: #8a4400; }
+
 .mrt-print { display: flex; flex-direction: column; gap: 16px; }
 .mrt-label-preview {
   align-self: center; width: 300px; max-width: 100%; aspect-ratio: 2 / 1; padding: 14px 18px;
@@ -506,7 +529,7 @@ textarea.mrt-input { resize: vertical; }
 
 /* ---------- Adaptation tablette / mobile ---------- */
 @media (max-width: 1000px) {
-  .mrt-scanner-grid { grid-template-columns: 1fr; }
+  .mrt-scanner-grid { grid-template-columns: minmax(0, 1fr); }
   .mrt-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .mrt-tabs-many .mrt-tab { padding: 14px 10px; }
 }
@@ -571,6 +594,10 @@ textarea.mrt-input { resize: vertical; }
   .mrt-td-since, .mrt-td-last { grid-column: 2 / -1; font-size: 13px; color: var(--mrt-grey); }
   .mrt-td-since::before, .mrt-td-last::before { content: attr(data-label) " : "; color: #767676; }
   .mrt-backdrop { padding: 0; align-items: flex-end; }
+  .mrt-backdrop.mrt-backdrop-alert { padding: 12px; align-items: center; }
+  .mrt-alert { padding: 22px 16px 16px; }
+  .mrt-alert-code { font-size: 28px; }
+  .mrt-alert-text { font-size: 16px; }
   .mrt-modal { max-height: 92vh; border-radius: var(--mrt-radius-lg) var(--mrt-radius-lg) 0 0; }
   .mrt-modal-body { padding: 8px 18px 22px; }
   .mrt-modal-head { padding: 14px 12px 4px 18px; }
@@ -583,6 +610,28 @@ textarea.mrt-input { resize: vertical; }
   .mrt-result .mrt-result-actions .mrt-btn { margin-left: 0; }
   .mrt-history-time { grid-column: 1; grid-row: 1 / span 4; align-self: start; }
   .mrt-history-day { padding: 16px 16px 6px; }
+}
+/* Petits écrans (terminaux Zebra) */
+@media (max-width: 420px) {
+  /* Boutons de la question l'un au-dessus de l'autre, « Oui » en haut. */
+  .mrt-alert-actions { display: flex; flex-direction: column-reverse; }
+  /* En-tête : le logo seul, toute la place pour l'agence et l'identifiant. */
+  .mrt-brand-sep, .mrt-title { display: none; }
+  .mrt-user { max-width: 70%; }
+  /* Les 5 onglets de l'administrateur tiennent dans la largeur, sans défilement. */
+  .mrt-tabs-many { overflow-x: visible; padding: 0 4px; }
+  .mrt-tabs-many .mrt-tab { flex: 1 1 0; min-width: 0; padding: 10px 2px; font-size: 11px; }
+  .mrt-tabs-many .mrt-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mrt-kpi-head { font-size: 13px; }
+  .mrt-kpi-value { font-size: 28px; }
+}
+/* Écran bas (terminal en paysage) : question plus compacte. */
+@media (max-height: 480px) {
+  .mrt-alert { padding: 14px 16px; gap: 4px; }
+  .mrt-alert-icon { display: none; }
+  .mrt-alert-code { font-size: 24px; }
+  .mrt-alert-actions { margin-top: 8px; }
+  .mrt-alert-actions .mrt-btn { min-height: 48px; }
 }
 `;
 

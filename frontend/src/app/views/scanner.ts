@@ -9,7 +9,7 @@ import { clear, h, icon } from '../dom';
 import { playFeedback } from '../feedback';
 import { formatDateHour, formatDateTimeAt, formatTime } from '../format';
 import { endMaintenance, openMaintenanceDialog } from '../maintenance';
-import { fire, IAppContext, IView, reasonsText } from '../ui';
+import { fire, IAppContext, IView, openBlockingDialog, reasonsText } from '../ui';
 
 interface IRecent {
   at: string;
@@ -156,43 +156,34 @@ export function createScannerView(ctx: IAppContext): IView {
     confirm: 'clock',
   };
 
-  // Rescan rapproché (moins de 24 h) en attente de confirmation : « Oui », ou Entrée sur la zone de scan vide.
+  // Rescan rapproché (moins de 24 h) : question bloquante au centre de l'écran, les scans attendent la réponse.
   let pending: { code: string; entry: IRecent } | undefined;
+  let closeQuestion: (() => void) | undefined;
 
   function askConfirmation(res: IScanResult, entry: IRecent): void {
     const r = res.roller;
     const last = res.lastScan;
     pending = { code: r.code, entry };
-    const yes = h(
-      'button',
-      { type: 'button', className: 'mrt-btn mrt-btn-light', onClick: () => confirmPending() },
-      icon('check'),
-      'Oui, rescanner',
-    );
-    const no = h(
-      'button',
-      { type: 'button', className: 'mrt-btn mrt-btn-ghost-light', onClick: () => dropPending() },
-      icon('close'),
-      'Non',
-    );
-    result.appendChild(
-      resultCard(
-        'confirm',
-        'Déjà scanné récemment',
-        r.code,
-        [
-          last
-            ? `Le roller ${r.code} a déjà été scanné le ${formatDateHour(last.at)} (${last.kind === 'out' ? 'départ' : 'retour'}).`
-            : `Le roller ${r.code} a déjà été scanné récemment.`,
-          `Êtes-vous certain de vouloir le rescanner ? Ce sera un ${res.next === 'out' ? 'départ' : 'retour'}.`,
-        ],
-        [yes, no],
-      ),
-    );
+    if (closeCamera) closeCamera();
+    const lastText = last
+      ? `Le roller ${r.code} a déjà été scanné le ${formatDateHour(last.at)} (${last.kind === 'out' ? 'départ' : 'retour'}).`
+      : `Le roller ${r.code} a déjà été scanné récemment.`;
+    result.appendChild(resultCard('confirm', 'Déjà scanné récemment — réponse attendue', r.code, [describeRoller(r), lastText]));
+    closeQuestion = openBlockingDialog(ctx.root, {
+      title: 'Déjà scanné récemment',
+      icon: 'clock',
+      code: r.code,
+      lines: [lastText, `Êtes-vous certain de vouloir le rescanner ? Ce sera un ${res.next === 'out' ? 'départ' : 'retour'}.`],
+      actions: [
+        { label: 'Non', icon: 'close', onClick: () => dropPending() },
+        { label: 'Oui, rescanner', icon: 'check', primary: true, onClick: () => confirmPending() },
+      ],
+    });
   }
 
   function confirmPending(): void {
     if (!pending) return;
+    closeQuestion = undefined;
     const { code } = pending;
     pending.entry.text = 'Rescan confirmé';
     pending = undefined;
@@ -202,6 +193,7 @@ export function createScannerView(ctx: IAppContext): IView {
 
   function dropPending(): void {
     if (!pending) return;
+    closeQuestion = undefined;
     pending.entry.text = 'Rescan abandonné';
     const code = pending.code;
     pending = undefined;
@@ -439,16 +431,8 @@ export function createScannerView(ctx: IAppContext): IView {
     window.clearTimeout(autoTimer);
     const code = raw.trim();
     input.value = '';
-    if (!code) {
-      // Entrée sur la zone vide = « Oui » à la question de rescan.
-      if (pending) confirmPending();
-      return;
-    }
-    // Scanner un autre roller abandonne la question en cours.
-    if (pending && !confirm) {
-      pending.entry.text = 'Rescan abandonné';
-      pending = undefined;
-    }
+    // Tant que la question de rescan attend sa réponse, aucun autre scan n'est pris en compte.
+    if (!code || (pending && !confirm)) return;
     // File d'attente : les scans rapides à la douchette sont traités dans l'ordre.
     queue = queue.then(async () => {
       showPending(code);
@@ -579,6 +563,7 @@ export function createScannerView(ctx: IAppContext): IView {
     },
     dispose() {
       active = false;
+      if (closeQuestion) closeQuestion();
       if (closeCamera) closeCamera();
       document.removeEventListener('keydown', onGlobalKey, true);
     },
