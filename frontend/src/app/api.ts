@@ -46,6 +46,11 @@ export interface IRoller {
   archived: boolean;
 }
 
+export interface IPhoto {
+  id: string;
+  reason: string;
+}
+
 export interface IMovement {
   id: number;
   code: string;
@@ -53,6 +58,8 @@ export interface IMovement {
   agency: IAgency;
   kind: MovementKind;
   reasons: string[];
+  /** Photos de la casse (mise en maintenance uniquement). */
+  photos: IPhoto[];
   agent: string | null;
   scannedAt: string;
   cancelled: boolean;
@@ -162,13 +169,15 @@ export class ApiClient {
 
   private async raw(method: string, path: string, body?: unknown): Promise<Response> {
     const headers: Record<string, string> = { Accept: 'application/json', 'X-Requested-With': 'mewa-rollers' };
-    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    // Un fichier (photo) part tel quel ; le reste en JSON.
+    const isBlob = body instanceof Blob;
+    if (body !== undefined) headers['Content-Type'] = isBlob ? body.type : 'application/json';
     let res: Response;
     try {
       res = await fetch(path, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? undefined : isBlob ? body : JSON.stringify(body),
         credentials: 'same-origin',
       });
     } catch {
@@ -245,9 +254,21 @@ export class ApiClient {
     return this.request('PATCH', `/api/rollers/${encodeURIComponent(code)}`, input);
   }
 
-  /** Mise en maintenance (ou changement des raisons d'une maintenance en cours). */
-  public startMaintenance(code: string, reasons: string[]): Promise<IMovementResult> {
-    return this.request('POST', `/api/rollers/${encodeURIComponent(code)}/maintenance`, { reasons });
+  /**
+   * Mise en maintenance (ou changement des raisons d'une maintenance en cours).
+   * `photos` : une photo par raison (identifiants renvoyés par `uploadPhoto`).
+   */
+  public startMaintenance(code: string, reasons: string[], photos: Record<string, string>): Promise<IMovementResult> {
+    return this.request('POST', `/api/rollers/${encodeURIComponent(code)}/maintenance`, { reasons, photos });
+  }
+
+  /** Envoie une photo JPEG ; elle sera rattachée à la maintenance à sa validation. */
+  public uploadPhoto(jpeg: Blob): Promise<{ id: string }> {
+    return this.request('POST', '/api/photos', jpeg);
+  }
+
+  public photoUrl(id: string): string {
+    return `/api/photos/${encodeURIComponent(id)}`;
   }
 
   public endMaintenance(code: string): Promise<IMovementResult> {

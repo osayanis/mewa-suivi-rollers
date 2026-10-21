@@ -1,4 +1,5 @@
 // Configuration lue depuis les variables d'environnement (voir .env.example).
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,6 +35,10 @@ export function loadConfig(overrides = {}) {
     overdueDays: int('OVERDUE_DAYS', 14),
     ...overrides,
   };
+  // Photos des maintenances : à côté de la base (dans le volume Docker /data), sauf PHOTOS_DIR.
+  config.photosDir ??=
+    process.env.PHOTOS_DIR ||
+    (config.dbPath === ':memory:' ? join(tmpdir(), 'mewa-rollers-photos') : join(dirname(config.dbPath), 'photos'));
   // Mot de passe administrateur provisoire, écrit à côté de la base jusqu'à son changement.
   config.initialCredentialsFile =
     config.dbPath === ':memory:' ? null : join(dirname(config.dbPath), 'identifiants-admin-initial.txt');

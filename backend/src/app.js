@@ -13,6 +13,7 @@ import {
 } from './auth.js';
 import { normalizeScannedCode } from './codes.js';
 import { HttpError, MAINTENANCE_REASONS, Store } from './db.js';
+import { MAX_PHOTO_BYTES, Photos } from './photos.js';
 
 // Politique de sécurité de l'interface : tout vient du serveur lui-même (aucun CDN externe).
 // Les styles sont injectés par l'application (style-src 'unsafe-inline'), la police est en data:.
@@ -47,6 +48,7 @@ function csvCell(value) {
 export function createApp(db, config) {
   const store = new Store(db, config);
   const accounts = new Accounts(db, config);
+  const photos = new Photos(db, config);
   const loginLimiter = createLoginLimiter();
   const app = express();
   app.disable('x-powered-by');
@@ -184,12 +186,24 @@ export function createApp(db, config) {
 
   api.post('/rollers/:code/maintenance', (req, res) => {
     const code = normalizeScannedCode(req.params.code);
-    res.json(store.startMaintenance(code, req.scope, req.body?.reasons, req.user.username));
+    res.json(store.startMaintenance(code, req.scope, req.body?.reasons, req.body?.photos, req.user.username));
   });
 
   api.delete('/rollers/:code/maintenance', (req, res) => {
     const code = normalizeScannedCode(req.params.code);
     res.json(store.endMaintenance(code, req.scope, req.user.username));
+  });
+
+  // Photo de maintenance (JPEG, réduite par le navigateur), rattachée ensuite à la maintenance.
+  api.post('/photos', express.raw({ type: 'image/jpeg', limit: MAX_PHOTO_BYTES }), (req, res) => {
+    res.status(201).json(photos.save(req.body, req.user.username));
+  });
+
+  api.get('/photos/:id', (req, res) => {
+    const row = photos.requireReadable(req.params.id, req.user, req.scope);
+    res.set('Cache-Control', 'private, max-age=86400, immutable');
+    res.type('image/jpeg');
+    res.sendFile(photos.pathFor(row.id));
   });
 
   api.post('/scans', (req, res) => {
@@ -268,6 +282,9 @@ export function createApp(db, config) {
     if (err instanceof HttpError) {
       return res.status(err.status).json({ error: err.code, message: err.message, ...(err.details ?? {}) });
     }
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'too_large', message: 'Envoi trop volumineux.' });
+    }
     if (err?.type === 'entity.parse.failed') {
       return res.status(400).json({ error: 'bad_json', message: 'Requête JSON invalide.' });
     }
@@ -276,5 +293,6 @@ export function createApp(db, config) {
   });
 
   app.locals.accounts = accounts;
+  app.locals.photos = photos;
   return app;
 }

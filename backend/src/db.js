@@ -352,9 +352,15 @@ export class Store {
     });
   }
 
-  /** Met un roller en maintenance, ou change les raisons d'une maintenance en cours. */
-  startMaintenance(code, scope, reasonsInput, agent) {
-    const reasons = normalizeReasons(reasonsInput).join(',');
+  /**
+   * Met un roller en maintenance, ou change les raisons d'une maintenance en cours.
+   * Chaque raison doit être illustrée par une photo : `photos` = { roulettes: <id de photo>, ... }
+   * (photos envoyées juste avant par cet utilisateur). Une raison déjà photographiée n'en demande pas d'autre.
+   */
+  startMaintenance(code, scope, reasonsInput, photosInput, agent) {
+    const reasonList = normalizeReasons(reasonsInput);
+    const reasons = reasonList.join(',');
+    const photos = photosInput && typeof photosInput === 'object' ? photosInput : {};
     return this.tx(() => {
       const row = this.requireRoller(code, scope);
       if (row.archived_at) throw new HttpError(409, 'archived', `Le roller ${row.code} est archivé.`);
@@ -366,17 +372,37 @@ export class Store {
         );
       }
       const now = nowIso();
-      if (row.status === 'maintenance') {
-        const current = this.activeMovementRow(row.id);
+      const current = row.status === 'maintenance' ? this.activeMovementRow(row.id) : undefined;
+      const alreadyShot = new Set(current ? this.photosOf(current.id).map((p) => p.reason) : []);
+      const toAttach = [];
+      for (const reason of reasonList) {
+        const photoId = photos[reason];
+        if (!photoId) {
+          if (alreadyShot.has(reason)) continue;
+          const label = MAINTENANCE_REASONS.find((r) => r.id === reason).label.toLowerCase();
+          throw new HttpError(400, 'photo_required', `Prenez une photo de la casse (${label}) avant de valider.`);
+        }
+        const photo = this.db.prepare('SELECT * FROM photos WHERE id = ?').get(String(photoId));
+        if (!photo || photo.movement_id !== null || photo.created_by !== agent) {
+          throw new HttpError(400, 'invalid_photo', 'Photo introuvable : reprenez-la.');
+        }
+        toAttach.push({ id: photo.id, reason });
+      }
+
+      let movementId;
+      if (current) {
+        movementId = current.id;
         this.db.prepare('UPDATE movements SET reasons = ? WHERE id = ?').run(reasons, current.id);
         this.db.prepare('UPDATE rollers SET maintenance_reasons = ? WHERE id = ?').run(reasons, row.id);
-        return { movement: this.toMovement(this.getMovementRow(current.id)), roller: this.toRoller(this.getRollerRowById(row.id), now) };
+      } else {
+        movementId = this.insertMovement(row, 'maintenance_start', agent, now, reasons).id;
+        this.db
+          .prepare(`UPDATE rollers SET status = 'maintenance', maintenance_reasons = ?, maintenance_since = ? WHERE id = ?`)
+          .run(reasons, now, row.id);
       }
-      const movement = this.insertMovement(row, 'maintenance_start', agent, now, reasons);
-      this.db
-        .prepare(`UPDATE rollers SET status = 'maintenance', maintenance_reasons = ?, maintenance_since = ? WHERE id = ?`)
-        .run(reasons, now, row.id);
-      return { movement, roller: this.toRoller(this.getRollerRowById(row.id), now) };
+      const attach = this.db.prepare('UPDATE photos SET movement_id = ?, reason = ? WHERE id = ?');
+      for (const p of toAttach) attach.run(movementId, p.reason, p.id);
+      return { movement: this.toMovement(this.getMovementRow(movementId)), roller: this.toRoller(this.getRollerRowById(row.id), now) };
     });
   }
 
@@ -410,6 +436,13 @@ export class Store {
       .get(rollerId, ...(kinds ?? []));
   }
 
+  photosOf(movementId) {
+    return this.db
+      .prepare('SELECT id, reason FROM photos WHERE movement_id = ? ORDER BY created_at, id')
+      .all(movementId)
+      .map((p) => ({ id: p.id, reason: p.reason }));
+  }
+
   toMovement(row) {
     if (!row) return null;
     return {
@@ -419,6 +452,7 @@ export class Store {
       agency: { id: row.agency_id, code: row.agency_code, city: row.agency_city ?? '', name: agencyName(row.agency_code, row.agency_city) },
       kind: row.kind,
       reasons: splitReasons(row.reasons),
+      photos: row.kind === 'maintenance_start' ? this.photosOf(row.id) : [],
       agent: row.agent ?? null,
       scannedAt: row.scanned_at,
       cancelled: Boolean(row.cancelled_at),

@@ -465,6 +465,50 @@ textarea.mrt-input { resize: vertical; }
 .mrt-reason span span { font-size: 13px; color: var(--mrt-grey); }
 .mrt-reason:hover { border-color: #9a9a9a; }
 .mrt-reason-active, .mrt-reason-active:hover { border-color: var(--mrt-violet); background: var(--mrt-violet-bg); }
+/* Fenêtre de maintenance en étapes : raisons, puis une photo par raison guidée par le modèle 3D. */
+.mrt-maint { display: flex; flex-direction: column; gap: 16px; }
+.mrt-maint-actions { margin-top: 4px; }
+.mrt-steps-bar { display: flex; flex-wrap: wrap; gap: 6px; counter-reset: mrt-step; }
+.mrt-steps-bar li {
+  counter-increment: mrt-step; display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px 4px 4px;
+  border-radius: 999px; background: var(--mrt-grey-100); color: var(--mrt-grey); font-size: 13px; font-weight: 500;
+}
+.mrt-steps-bar li::before {
+  content: counter(mrt-step); display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%; background: #fff; font-size: 12px; font-weight: 700;
+}
+.mrt-steps-bar .mrt-step-done { background: var(--mrt-green-bg); color: var(--mrt-green); }
+.mrt-steps-bar .mrt-step-done::before { content: "✓"; }
+.mrt-steps-bar .mrt-step-current { background: var(--mrt-coal); color: #fff; }
+.mrt-steps-bar .mrt-step-current::before { color: var(--mrt-coal); }
+.mrt-photo-step { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.mrt-3d {
+  position: relative; aspect-ratio: 4 / 3; border-radius: var(--mrt-radius); overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, #ffffff 0%, var(--mrt-grey-100) 70%);
+  display: flex; align-items: center; justify-content: center;
+}
+.mrt-3d-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: pan-y; cursor: grab; }
+.mrt-3d-canvas:active { cursor: grabbing; }
+.mrt-3d-off { flex-direction: column; gap: 8px; color: var(--mrt-grey); font-size: 14px; padding: 16px; text-align: center; }
+.mrt-photo-side { display: flex; flex-direction: column; gap: 10px; }
+.mrt-photo-kicker { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--mrt-red); }
+.mrt-photo-title { font-size: 22px; font-weight: 700; line-height: 1.2; }
+.mrt-photo-guide { font-size: 16px; }
+.mrt-shot-take { min-height: 64px; font-size: 17px; margin-top: 6px; }
+.mrt-icon-lg { width: 26px; height: 26px; }
+.mrt-shot { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.mrt-shot-img { width: 100%; max-height: 220px; object-fit: cover; border-radius: var(--mrt-radius-sm); background: var(--mrt-grey-100); }
+.mrt-shot-busy { flex-direction: row; align-items: center; justify-content: center; min-height: 64px; border-radius: var(--mrt-radius-sm); background: var(--mrt-grey-100); color: var(--mrt-grey); }
+.mrt-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.mrt-thumb {
+  display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; background: none; text-align: left;
+  font-size: 12px; color: var(--mrt-grey); width: 96px;
+}
+.mrt-thumb img { width: 96px; height: 72px; object-fit: cover; border-radius: 8px; background: var(--mrt-grey-100); border: 1px solid rgba(0, 0, 0, .06); }
+.mrt-thumb:hover img { outline: 2px solid var(--mrt-violet); outline-offset: 1px; }
+.mrt-thumbs-small .mrt-thumb, .mrt-thumbs-small .mrt-thumb img { width: 52px; height: 40px; }
+.mrt-photo-full { display: block; width: 100%; max-height: 75vh; object-fit: contain; border-radius: var(--mrt-radius-sm); background: #111; }
+
 .mrt-detail-maintenance { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .mrt-maintenance-box { align-self: stretch; display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: var(--mrt-radius); background: var(--mrt-violet-bg); }
 .mrt-maintenance-box .mrt-form-actions { margin-top: 8px; }
@@ -662,6 +706,10 @@ textarea.mrt-input { resize: vertical; }
   .mrt-td-agency::before { content: attr(data-label) " : "; color: #767676; }
   .mrt-td-agency { grid-column: 2 / -1; }
   .mrt-transfer { grid-template-columns: 1fr; }
+  .mrt-photo-step { grid-template-columns: 1fr; gap: 14px; }
+  .mrt-3d { aspect-ratio: auto; height: 210px; }
+  .mrt-photo-title { font-size: 19px; }
+  .mrt-photo-guide { font-size: 15px; }
   .mrt-panel { padding: 16px; }
   .mrt-fleet-total strong { font-size: 32px; }
   .mrt-legend { gap: 8px 18px; }
@@ -739,6 +787,14 @@ textarea.mrt-input { resize: vertical; }
   .mrt-alert-code { font-size: 24px; }
   .mrt-alert-actions { margin-top: 8px; }
   .mrt-alert-actions .mrt-btn { min-height: 48px; }
+}
+/* Terminal tenu en paysage : modèle 3D et consigne côte à côte. */
+@media (max-height: 480px) and (min-width: 560px) {
+  .mrt-photo-step { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  .mrt-3d { height: 190px; }
+  .mrt-photo-title { font-size: 17px; }
+  .mrt-photo-guide { font-size: 14px; }
+  .mrt-shot-take { min-height: 52px; }
 }
 `;
 
