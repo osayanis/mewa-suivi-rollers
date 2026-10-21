@@ -11,7 +11,7 @@
 
 <p align="center">
   <img alt="Outil interne" src="https://img.shields.io/badge/outil-interne-E60021?style=flat-square">
-  <img alt="Multi-agences" src="https://img.shields.io/badge/agences-GS60_·_GS74_·_GS75_·_GS76_·_GS78-193273?style=flat-square">
+  <img alt="Multi-agences" src="https://img.shields.io/badge/agences-6-193273?style=flat-square">
   <img alt="Docker" src="https://img.shields.io/badge/Docker-1_conteneur-0050A0?style=flat-square&logo=docker&logoColor=white">
   <img alt="Node.js 24" src="https://img.shields.io/badge/Node.js-24-193273?style=flat-square&logo=nodedotjs&logoColor=white">
   <img alt="SQLite" src="https://img.shields.io/badge/SQLite-intégré-515151?style=flat-square&logo=sqlite&logoColor=white">
@@ -64,7 +64,18 @@ Chaque mouvement est enregistré avec sa date, son heure, l'agence et l'utilisat
 | **Compte d'agence** | Obligatoire (une seule) | Scanner · Rollers · Historique de **son agence** |
 | **Administrateur** | Aucune | Supervision · Rollers · Historique de **toutes les agences** · Agences · Utilisateurs |
 
-Les agences **GS60, GS74, GS75 (Toussieu), GS76 et GS78** sont créées au premier démarrage. Les villes manquantes se renseignent dans l'onglet **Agences**, qui permet aussi d'en ajouter de nouvelles.
+Six agences sont créées au premier démarrage :
+
+| Code | Ville |
+|---|---|
+| GS18 | Saarlouis |
+| GS60 | Binche |
+| GS74 | Spay |
+| GS75 | Toussieu |
+| GS76 | Rémy |
+| GS78 | Gémenos |
+
+L'onglet **Agences** permet d'en modifier ou d'en ajouter. Sur une base existante, la mise à jour ajoute les agences manquantes et complète les villes vides, sans remplacer une ville déjà saisie.
 
 Les codes-barres sont numérotés pour toutes les agences à la fois : un code est unique dans tout Mewa. Un roller scanné dans la mauvaise agence est refusé avec le nom de son agence. L'administrateur peut transférer un roller d'une agence à une autre depuis sa fiche.
 
@@ -297,7 +308,6 @@ La sauvegarde contient les empreintes des mots de passe : conservez-la en lieu s
 
 ## À savoir
 
-- **Villes des agences** : seule **GS75 = Toussieu** est confirmée. Les villes de GS60, GS74, GS76 et GS78 sont à renseigner dans l'onglet Agences.
 - **Police Gebauer** : c'est la police d'entreprise de Mewa (fonderie TypeMates), et elle est incluse dans ce dépôt **privé**. Ne pas rendre le dépôt public sans l'accord de la communication.
 
 <p align="center"><sub>Outil interne Mewa · Service informatique</sub></p>
