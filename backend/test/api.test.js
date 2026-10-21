@@ -404,6 +404,14 @@ describe('rollers d’une agence', () => {
     const gs76 = overview.body.agencies.find((a) => a.agency.code === 'GS76');
     assert.equal(gs76.onSite, 2);
     assert.equal(overview.body.agencies.length, 6);
+    assert.equal(overview.body.activity.length, 14, '14 jours d’activité');
+    const today = overview.body.activity.at(-1);
+    assert.ok(today.out >= 1 && today.in >= 1, 'les scans du jour sont comptés');
+    assert.deepEqual(
+      overview.body.overdueRollers.map((r) => r.code),
+      ['ROL000002'],
+      'les rollers en retard sont listés',
+    );
 
     const all = await ctx.adminCall('GET', '/api/rollers');
     assert.equal(all.body.length, 5);

@@ -79,9 +79,20 @@ export interface IAgencyStats extends Omit<IStats, 'overdueDays'> {
   agency: IAgency;
 }
 
+export interface IDayActivity {
+  /** Jour local, « 2026-10-21 ». */
+  date: string;
+  out: number;
+  in: number;
+}
+
 export interface IOverview {
   totals: IStats;
   agencies: IAgencyStats[];
+  /** Départs et retours des 14 derniers jours, du plus ancien au plus récent. */
+  activity: IDayActivity[];
+  /** Rollers en retard de toutes les agences, les plus anciens d'abord (8 au plus). */
+  overdueRollers: IRoller[];
 }
 
 export interface IMaintenanceReason {

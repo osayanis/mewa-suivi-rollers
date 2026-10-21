@@ -12,6 +12,7 @@ RUN npm run build
 FROM node:24-alpine
 
 ENV NODE_ENV=production \
+    TZ=Europe/Paris \
     PORT=8080 \
     DB_PATH=/data/rollers.db \
     PUBLIC_DIR=/app/public

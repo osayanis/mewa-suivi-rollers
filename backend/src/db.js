@@ -251,7 +251,38 @@ export class Store {
       outToday: Number(todayByAgency.get(a.id)?.outToday ?? 0),
       inToday: Number(todayByAgency.get(a.id)?.inToday ?? 0),
     }));
-    return { totals: this.stats({ agencyId: null }), agencies };
+    return {
+      totals: this.stats({ agencyId: null }),
+      agencies,
+      activity: this.activity(14),
+      overdueRollers: this.listRollers({ agencyId: null }, { status: 'overdue' }).slice(0, 8),
+    };
+  }
+
+  /** Départs et retours par jour (heure locale du serveur, TZ=Europe/Paris), du plus ancien au plus récent. */
+  activity(days) {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    const dayKey = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const buckets = new Map();
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      buckets.set(dayKey(d), { date: dayKey(d), out: 0, in: 0 });
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT kind, scanned_at FROM movements
+         WHERE cancelled_at IS NULL AND kind IN ('out', 'in') AND scanned_at >= ?`,
+      )
+      .all(start.toISOString());
+    for (const row of rows) {
+      const bucket = buckets.get(dayKey(new Date(row.scanned_at)));
+      if (bucket) bucket[row.kind] += 1;
+    }
+    return [...buckets.values()];
   }
 
   // ---------- Scans / mouvements ----------
