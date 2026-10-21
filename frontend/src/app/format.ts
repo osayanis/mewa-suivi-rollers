@@ -22,6 +22,12 @@ export function formatDateTimeAt(iso: string | null | undefined): string {
   return `${dateFmt.format(d)} à ${timeFmt.format(d)}`;
 }
 
+/** « 21/10/2026 à 14h32 » */
+export function formatDateHour(iso: string): string {
+  const d = new Date(iso);
+  return `${dateFmt.format(d)} à ${timeFmt.format(d).replace(':', 'h')}`;
+}
+
 export function formatTime(iso: string): string {
   return timeFmt.format(new Date(iso));
 }

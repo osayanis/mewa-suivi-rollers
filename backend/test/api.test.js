@@ -253,7 +253,7 @@ describe('administration : agences et utilisateurs', () => {
 describe('rollers d’une agence', () => {
   let ctx;
   before(async () => {
-    ctx = await setup({ duplicateWindowSeconds: 0 });
+    ctx = await setup({ duplicateWindowSeconds: 0, rescanConfirmHours: 0 });
   });
   after(() => ctx.close());
 
@@ -429,7 +429,7 @@ describe('rollers d’une agence', () => {
 
 describe('anti double-scan', () => {
   test('une double lecture immédiate est ignorée, pas un rescan quelques secondes après', async () => {
-    const ctx = await setup();
+    const ctx = await setup({ rescanConfirmHours: 0 });
     await ctx.agent('POST', '/api/rollers', { count: 1 });
     const first = await ctx.agent('POST', '/api/scans', { code: 'ROL000001' });
     assert.equal(first.body.result, 'out');
@@ -438,6 +438,37 @@ describe('anti double-scan', () => {
     ctx.db.prepare('UPDATE rollers SET last_movement_at = ?').run(new Date(Date.now() - 3000).toISOString());
     const back = await ctx.agent('POST', '/api/scans', { code: 'ROL000001' });
     assert.equal(back.body.result, 'in', 'passé le délai, le rescan est un retour');
+    ctx.close();
+  });
+});
+
+describe('confirmation d’un rescan dans les 24 h', () => {
+  test('premier scan libre, rescan rapproché à confirmer, puis libre après 24 h', async () => {
+    const ctx = await setup();
+    await ctx.agent('POST', '/api/rollers', { count: 1 });
+    const first = await ctx.agent('POST', '/api/scans', { code: 'ROL000001' });
+    assert.equal(first.body.result, 'out', 'un roller jamais scanné passe directement');
+
+    const age = (hours) =>
+      ctx.db.prepare('UPDATE rollers SET last_movement_at = ?').run(new Date(Date.now() - hours * 3600_000).toISOString());
+    age(23);
+    const ask = await ctx.agent('POST', '/api/scans', { code: 'ROL000001' });
+    assert.equal(ask.status, 200);
+    assert.equal(ask.body.result, 'confirm');
+    assert.equal(ask.body.lastScan.kind, 'out');
+    assert.equal(ask.body.next, 'in');
+    assert.equal(ask.body.roller.status, 'in_transit', 'rien n’est enregistré sans confirmation');
+    assert.equal((await ctx.agent('GET', '/api/movements')).body.length, 1);
+
+    const confirmed = await ctx.agent('POST', '/api/scans', { code: 'ROL000001', confirm: true });
+    assert.equal(confirmed.body.result, 'in');
+
+    age(25);
+    const later = await ctx.agent('POST', '/api/scans', { code: 'ROL000001' });
+    assert.equal(later.body.result, 'out', 'au-delà de 24 h, pas de confirmation');
+
+    const duplicate = await ctx.agent('POST', '/api/scans', { code: 'ROL000001' });
+    assert.equal(duplicate.body.result, 'duplicate', 'une double lecture immédiate reste ignorée sans question');
     ctx.close();
   });
 });

@@ -7,7 +7,7 @@ import { openCameraScanner } from '../camera';
 import { isCompleteCode } from '../codes';
 import { clear, h, icon } from '../dom';
 import { playFeedback } from '../feedback';
-import { formatDateTimeAt, formatTime } from '../format';
+import { formatDateHour, formatDateTimeAt, formatTime } from '../format';
 import { endMaintenance, openMaintenanceDialog } from '../maintenance';
 import { fire, IAppContext, IView, reasonsText } from '../ui';
 
@@ -145,7 +145,7 @@ export function createScannerView(ctx: IAppContext): IView {
     );
   }
 
-  type CardKind = 'out' | 'in' | 'duplicate' | 'error' | 'cancelled' | 'maintenance';
+  type CardKind = 'out' | 'in' | 'duplicate' | 'error' | 'cancelled' | 'maintenance' | 'confirm';
   const CARD_ICONS: Record<CardKind, string> = {
     out: 'out',
     in: 'in',
@@ -153,7 +153,63 @@ export function createScannerView(ctx: IAppContext): IView {
     error: 'alert',
     cancelled: 'undo',
     maintenance: 'wrench',
+    confirm: 'clock',
   };
+
+  // Rescan rapproché (moins de 24 h) en attente de confirmation : « Oui », ou Entrée sur la zone de scan vide.
+  let pending: { code: string; entry: IRecent } | undefined;
+
+  function askConfirmation(res: IScanResult, entry: IRecent): void {
+    const r = res.roller;
+    const last = res.lastScan;
+    pending = { code: r.code, entry };
+    const yes = h(
+      'button',
+      { type: 'button', className: 'mrt-btn mrt-btn-light', onClick: () => confirmPending() },
+      icon('check'),
+      'Oui, rescanner',
+    );
+    const no = h(
+      'button',
+      { type: 'button', className: 'mrt-btn mrt-btn-ghost-light', onClick: () => dropPending() },
+      icon('close'),
+      'Non',
+    );
+    result.appendChild(
+      resultCard(
+        'confirm',
+        'Déjà scanné récemment',
+        r.code,
+        [
+          last
+            ? `Le roller ${r.code} a déjà été scanné le ${formatDateHour(last.at)} (${last.kind === 'out' ? 'départ' : 'retour'}).`
+            : `Le roller ${r.code} a déjà été scanné récemment.`,
+          `Êtes-vous certain de vouloir le rescanner ? Ce sera un ${res.next === 'out' ? 'départ' : 'retour'}.`,
+        ],
+        [yes, no],
+      ),
+    );
+  }
+
+  function confirmPending(): void {
+    if (!pending) return;
+    const { code } = pending;
+    pending.entry.text = 'Rescan confirmé';
+    pending = undefined;
+    renderRecent();
+    submit(code, true);
+  }
+
+  function dropPending(): void {
+    if (!pending) return;
+    pending.entry.text = 'Rescan abandonné';
+    const code = pending.code;
+    pending = undefined;
+    renderRecent();
+    clear(result);
+    result.appendChild(resultCard('cancelled', 'Scan non enregistré', code, 'Le roller garde son statut actuel.'));
+    focusInput();
+  }
 
   function resultCard(
     kind: CardKind,
@@ -298,7 +354,7 @@ export function createScannerView(ctx: IAppContext): IView {
       at: new Date().toISOString(),
       code: r.code,
       label: r.label,
-      kind: res.result,
+      kind: res.result === 'confirm' ? 'duplicate' : res.result,
       text: '',
       movement: res.movement,
     };
@@ -331,6 +387,10 @@ export function createScannerView(ctx: IAppContext): IView {
         ),
       );
       playFeedback('in', ctx.prefs.sound);
+    } else if (res.result === 'confirm') {
+      entry.text = 'Rescan à confirmer';
+      askConfirmation(res, entry);
+      playFeedback('warning', ctx.prefs.sound);
     } else {
       entry.text = 'Doublon ignoré';
       result.appendChild(resultCard('duplicate', 'Déjà scanné', r.code, res.message ?? 'Scan ignoré.'));
@@ -338,7 +398,7 @@ export function createScannerView(ctx: IAppContext): IView {
     }
     recent.unshift(entry);
     renderRecent();
-    if (res.result !== 'duplicate') ctx.notifyChanged();
+    if (res.result === 'out' || res.result === 'in') ctx.notifyChanged();
   }
 
   function onScanError(code: string, err: unknown): void {
@@ -375,16 +435,25 @@ export function createScannerView(ctx: IAppContext): IView {
     renderRecent();
   }
 
-  function submit(raw: string): void {
+  function submit(raw: string, confirm = false): void {
     window.clearTimeout(autoTimer);
     const code = raw.trim();
     input.value = '';
-    if (!code) return;
+    if (!code) {
+      // Entrée sur la zone vide = « Oui » à la question de rescan.
+      if (pending) confirmPending();
+      return;
+    }
+    // Scanner un autre roller abandonne la question en cours.
+    if (pending && !confirm) {
+      pending.entry.text = 'Rescan abandonné';
+      pending = undefined;
+    }
     // File d'attente : les scans rapides à la douchette sont traités dans l'ordre.
     queue = queue.then(async () => {
       showPending(code);
       try {
-        onScanResult(await ctx.api.scan(code));
+        onScanResult(await ctx.api.scan(code, confirm));
       } catch (err) {
         onScanError(code.toUpperCase(), err);
       }

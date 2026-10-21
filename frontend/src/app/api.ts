@@ -97,8 +97,12 @@ export interface IServerInfo {
 }
 
 export interface IScanResult {
-  result: 'out' | 'in' | 'duplicate';
+  result: 'out' | 'in' | 'duplicate' | 'confirm';
   message?: string;
+  /** `confirm` : dernier départ ou retour du roller (moins de 24 h), rien n'a été enregistré. */
+  lastScan?: { kind: 'out' | 'in'; at: string };
+  /** `confirm` : mouvement qui sera enregistré si l'agent confirme. */
+  next?: 'out' | 'in';
   /** Date et heure du départ (pour un retour : celle du départ précédent). */
   departedAt?: string | null;
   movement?: IMovement;
@@ -239,8 +243,9 @@ export class ApiClient {
     return this.request('DELETE', `/api/rollers/${encodeURIComponent(code)}/maintenance`);
   }
 
-  public scan(code: string): Promise<IScanResult> {
-    return this.request('POST', '/api/scans', { code });
+  /** `confirm` : l'agent a confirmé un rescan rapproché. */
+  public scan(code: string, confirm = false): Promise<IScanResult> {
+    return this.request('POST', '/api/scans', confirm ? { code, confirm } : { code });
   }
 
   public cancelMovement(id: number): Promise<IMovementResult> {

@@ -193,8 +193,8 @@ export function createApp(db, config) {
   });
 
   api.post('/scans', (req, res) => {
-    const { code } = req.body ?? {};
-    res.json(store.scan({ code: normalizeScannedCode(code) }, req.scope, req.user.username));
+    const { code, confirm } = req.body ?? {};
+    res.json(store.scan({ code: normalizeScannedCode(code), confirm: confirm === true }, req.scope, req.user.username));
   });
 
   api.get('/movements', (req, res) => {
